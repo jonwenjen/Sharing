@@ -51,3 +51,21 @@ export async function pickAndShare(messages) {
 }
 
 export function closeWindow() { if (!state.demo && window.liff && window.liff.isInClient()) window.liff.closeWindow(); }
+
+export const inLineApp = () => !state.demo && !!window.liff && window.liff.isInClient();
+
+/** 用手機預設瀏覽器開啟（LINE 內建瀏覽器無法下載檔案） */
+export function openExternal(url) {
+  if (inLineApp()) { window.liff.openWindow({ url, external: true }); return true; }
+  window.open(url, '_blank');
+  return false;
+}
+
+/** 一般網址（非 liff.line.me），給外部瀏覽器用 */
+export function webUrl(params) {
+  const u = new URL(CONFIG.WEB_URL || location.href);
+  u.search = '';
+  for (const [k, v] of Object.entries(params)) if (v) u.searchParams.set(k, v);
+  if (state.demo) u.searchParams.set('demo', '1');
+  return u.toString();
+}

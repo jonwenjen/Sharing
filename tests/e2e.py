@@ -39,7 +39,14 @@ with sync_playwright() as p:
     dlg.get_by_label('小安 金額').fill('2000'); dlg.get_by_label('阿哲 金額').fill('1000')
     dlg.get_by_label('米米 參與分攤').uncheck(); dlg.get_by_label('Kai 參與分攤').uncheck()
     expect(dlg.get_by_text('金額剛好分配完畢')).to_be_visible()
-    expect(dlg.get_by_label('匯率')).to_have_value('0.213')
+    expect(dlg.locator('.rate-src')).to_contain_text('當日匯率')
+    r1 = dlg.get_by_label('匯率').input_value()
+    dlg.locator('input[type=date]').fill('2026-12-06'); dlg.locator('input[type=date]').dispatch_event('change')
+    pg.wait_for_timeout(300)
+    assert dlg.get_by_label('匯率').input_value() != r1, '換日期要換匯率'
+    expect(dlg.locator('.rate-src')).to_contain_text('2026-12-06 當日匯率')
+    dlg.get_by_label('匯率').fill('0.2')
+    expect(dlg.locator('.rate-src')).to_contain_text('手動輸入')
     shot('05-editor-foreign')
     dlg.get_by_role('button', name='記下這筆').click()
     expect(pg.get_by_text('便利商店')).to_be_visible()
@@ -53,7 +60,12 @@ with sync_playwright() as p:
     pg.get_by_role('button', name='刪除', exact=True).click()
     expect(pg.get_by_text('居酒屋')).to_have_count(0)
     # 結算
-    pg.get_by_role('tab', name='結算').click(); pg.wait_for_timeout(200); shot('06-settle')
+    pg.get_by_role('tab', name='結算').click(); pg.wait_for_timeout(200)
+    pg.get_by_label('顯示幣別').select_option('JPY'); pg.wait_for_timeout(300)
+    expect(pg.locator('.xfer-mid strong').first).to_contain_text('¥')
+    expect(pg.get_by_text('僅供參考', exact=False)).to_be_visible()
+    shot('06-settle')
+    pg.get_by_label('顯示幣別').select_option('TWD'); pg.wait_for_timeout(200)
     n_before = pg.locator('.xfer').count()
     pg.locator('.xfer').first.get_by_role('button', name='記為已付款').click()
     pg.get_by_role('dialog').get_by_role('button', name='記為已付款').click()
@@ -61,6 +73,15 @@ with sync_playwright() as p:
     assert pg.locator('.xfer').count() == n_before - 1, 'settled transfer should disappear'
     # 統計＋匯出
     pg.get_by_role('tab', name='統計').click(); pg.wait_for_timeout(200); shot('07-stats')
+    expect(pg.get_by_text('每日平均')).to_be_visible(); expect(pg.locator('svg.trend rect')).not_to_have_count(0)
+    expect(pg.get_by_text('前 5 大支出')).to_be_visible(); expect(pg.locator('table.cross')).to_be_visible()
+    pg.locator('.top5').scroll_into_view_if_needed(); shot('07b-stats-more')
+    pg.locator('table.cross').scroll_into_view_if_needed(); shot('07c-stats-cross')
+    pg.get_by_role('button', name='我的').click(); expect(pg.get_by_text('我分攤的支出')).to_be_visible(); expect(pg.get_by_text('占團體')).to_be_visible()
+    pg.get_by_role('button', name='全體').click()
+    ctx.grant_permissions(['clipboard-read', 'clipboard-write'])
+    pg.get_by_role('button', name='複製表格').click()
+    assert '\t' in pg.evaluate('navigator.clipboard.readText()'), 'TSV'
     with pg.expect_download() as d: pg.get_by_role('button', name='匯出明細').click()
     csv = open(d.value.path(), encoding='utf-8-sig').read()
     assert '便利商店' in csv and '日期' in csv, csv[:200]
@@ -83,8 +104,16 @@ with sync_playwright() as p:
     # 設定改名
     pg.get_by_role('button', name='帳本設定').click()
     pg.get_by_role('dialog').locator('input.input').first.fill('東京五日遊 2026')
+    pg.get_by_label('選擇要固定的幣別').select_option('JPY'); pg.get_by_role('button', name='加入固定匯率').click()
+    pg.get_by_label('JPY 固定匯率', exact=True).fill('0.205'); shot('13-settings')
     pg.get_by_role('dialog').get_by_role('button', name='儲存').click()
     expect(pg.locator('.top-title')).to_have_text('東京五日遊 2026')
+    pg.get_by_role('tab', name='明細').click()
+    pg.get_by_role('button', name='記一筆').click(); d2 = pg.get_by_role('dialog')
+    d2.get_by_label('幣別').select_option('JPY')
+    expect(d2.get_by_label('匯率')).to_have_value('0.205'); expect(d2.locator('.rate-src')).to_contain_text('固定匯率')
+    expect(d2.get_by_role('button', name='🧋 飲料')).to_be_visible(); expect(d2.get_by_role('button', name='🥐 早午餐')).to_be_visible()
+    pg.keyboard.press('Escape'); pg.wait_for_timeout(300)
     # 建立新帳本（USD）
     pg.get_by_role('button', name='回帳本列表').click()
     pg.get_by_role('button', name='建立帳本').click()

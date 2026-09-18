@@ -50,17 +50,17 @@ export function inviteFlex(ledger, url) {
   };
 }
 
-export function settleText(ledger, members, transfers) {
+export function settleText(ledger, members, transfers, fmt = (v) => formatMinor(v, ledger.baseCurrency)) {
   if (!transfers.length) return `【${ledger.name}】目前已經結清，不需要轉帳。`;
   return [`【${ledger.name}】最少 ${transfers.length} 筆轉帳即可結清：`,
-    ...transfers.map((t) => `・${nameOf(members, t.from)} → ${nameOf(members, t.to)}　${formatMinor(t.amount, ledger.baseCurrency)}`)].join('\n');
+    ...transfers.map((t) => `・${nameOf(members, t.from)} → ${nameOf(members, t.to)}　${fmt(t.amount)}`)].join('\n');
 }
 
 const csvCell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 const csv = (rows) => rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
 const TYPE = { expense: '支出', transfer: '轉帳', fund_in: '存入公費' };
 
-export function recordsCsv(ledger, members, records) {
+export function recordsCsv(ledger, members, records, sep = ',') {
   const base = ledger.baseCurrency;
   const active = members.map((m) => m.id);
   const head = ['日期', '類型', '項目', '分類', '金額', '幣別', '匯率', `換算${base}`, '付款人', ...members.map((m) => `${m.name} 分攤`), '備註'];
@@ -69,7 +69,7 @@ export function recordsCsv(ledger, members, records) {
     const { total, shares } = recordShares(r, base);
     return [r.date, TYPE[r.type], r.title, r.type === 'expense' ? categoryOf(r.category).name : '', r.amount, r.currency, r.currency === base ? 1 : r.rate, f(total), nameOf(members, r.payerId), ...active.map((id) => (shares[id] ? f(shares[id]) : '')), r.note || ''];
   });
-  return csv([head, ...rows]);
+  return sep === ',' ? csv([head, ...rows]) : [head, ...rows].map((r) => r.map((v) => String(v ?? '').replace(/[\t\n]/g, ' ')).join('\t')).join('\n');
 }
 
 export function summaryCsv(ledger, members, records, balances) {

@@ -208,6 +208,25 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .people th { font-size: 12px; color: var(--muted); font-weight: 700; border-bottom: 1px solid var(--line); }
 .people tr + tr td { border-top: 1px solid var(--line); }
 .people tr.me td:first-child { font-weight: 700; color: var(--cobalt); }
+.settle-head { align-items: center; }
+.settle-head .settle-sum { margin: 0; }
+.xfer-mid small { margin: 0; }
+.kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.kpi { background: var(--card); border-radius: var(--r-md); padding: 12px 14px; display: grid; }
+.kpi span { font-size: 12px; color: var(--muted); font-weight: 700; }
+.kpi strong { font: 700 19px var(--num); font-variant-numeric: tabular-nums; }
+.trend-wrap { background: var(--card); border-radius: var(--r-md); padding: 12px 10px 6px; }
+.trend { width: 100%; height: auto; display: block; overflow: visible; }
+.trend rect { fill: var(--cobalt); opacity: .45; }
+.trend rect.peak { opacity: 1; }
+.trend .axis { stroke: var(--line); }
+.trend text { font: 600 10px var(--num); fill: var(--muted); }
+.trend .peak-label { fill: var(--ink); font-size: 11px; }
+.top5 { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; counter-reset: t; }
+.people.cross th, .people.cross td { font-size: 13px; }
+.people.cross th { white-space: nowrap; }
+.export-box { display: grid; gap: 10px; margin-top: 6px; }
+.export-box .hint { margin: 0; }
 .export { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 /* 成員 */
@@ -240,6 +259,11 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .amount-input:focus { outline: none; }
 .rate-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 14px; color: var(--muted); }
 .input.rate { width: 110px; min-height: 38px; }
+.rate-src { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.rate-src .hint { margin: 0; }
+.fr-list { display: grid; gap: 8px; }
+.fr-row { font-size: 14px; color: var(--muted); }
+.fr-cur { min-width: 64px; }
 .split-list { display: grid; gap: 2px; background: var(--card); border-radius: var(--r-md); padding: 6px; margin-top: 10px; }
 .split-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; min-height: 48px; border-radius: 10px; }
 .split-row.off { opacity: .5; }

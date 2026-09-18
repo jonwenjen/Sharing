@@ -20,7 +20,11 @@ export const CURRENCIES = {
 };
 
 export const CATEGORIES = [
+  { id: 'brunch', name: '早午餐', icon: '🥐' },
+  { id: 'dinner', name: '晚餐', icon: '🍽️' },
   { id: 'food', name: '餐飲', icon: '🍜' },
+  { id: 'drink', name: '飲料', icon: '🧋' },
+  { id: 'dessert', name: '甜點', icon: '🍰' },
   { id: 'transport', name: '交通', icon: '🚃' },
   { id: 'stay', name: '住宿', icon: '🏨' },
   { id: 'ticket', name: '門票活動', icon: '🎟️' },
@@ -29,6 +33,22 @@ export const CATEGORIES = [
   { id: 'daily', name: '日用品', icon: '🧴' },
   { id: 'other', name: '其他', icon: '📦' },
 ];
+// 由項目名稱猜分類（LINE 訊息記帳用；順序＝優先度）
+const CAT_WORDS = [
+  ['brunch', /早午餐|早餐|brunch|早點|早午/i],
+  ['dinner', /晚餐|晚飯|宵夜|dinner|居酒屋|燒肉|火鍋/i],
+  ['dessert', /甜點|蛋糕|冰淇淋|霜淇淋|布丁|鬆餅|甜食|dessert/i],
+  ['drink', /飲料|咖啡|奶茶|手搖|果汁|啤酒|酒|coffee|tea|星巴克/i],
+  ['food', /午餐|餐|飯|麵|拉麵|壽司|便當|小吃|吃/i],
+  ['transport', /車|捷運|地鐵|電車|計程|uber|taxi|油|停車|機票|高鐵|新幹線|巴士|公車/i],
+  ['stay', /住|飯店|旅館|民宿|hotel|airbnb/i],
+  ['ticket', /門票|票|樂園|纜車|雪票|lift|體驗|入場/i],
+  ['shopping', /買|購物|藥妝|伴手禮|紀念品|超市|唐吉/i],
+  ['fun', /唱歌|ktv|遊戲|娛樂|按摩|溫泉/i],
+  ['daily', /日用|衛生紙|牙|洗/i],
+];
+export const guessCategory = (title) => (CAT_WORDS.find(([, re]) => re.test(title || '')) || ['other'])[0];
+
 export const categoryOf = (id) => CATEGORIES.find((c) => c.id === id) || CATEGORIES[CATEGORIES.length - 1];
 
 export const decimalsOf = (cur) => (CURRENCIES[cur] ? CURRENCIES[cur].decimals : 2);

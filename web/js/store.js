@@ -6,14 +6,16 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : M
 const now = () => Date.now();
 
 // ---------- 遠端 ----------
+// 只取網域部分，避免 API_BASE 誤填成 …/webhook 或 …/health
+const apiOrigin = () => { try { return new URL(CONFIG.API_BASE.trim()).origin; } catch { throw new Error('config.js 的 API_BASE 不是有效網址'); } };
 async function call(method, path, body) {
-  const res = await fetch(CONFIG.API_BASE.replace(/\/$/, '') + path, {
+  const res = await fetch(apiOrigin() + path, {
     method,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${line.idToken}` },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `連線失敗（${res.status}）`);
+  if (!res.ok) throw new Error(`${data.error || '連線失敗'}（${res.status}，${method} ${path}）`);
   return data;
 }
 const remote = {
@@ -30,7 +32,7 @@ const remote = {
   addRecord: (lid, r) => call('POST', `/api/ledgers/${lid}/records`, r),
   updateRecord: (rid, p) => call('PATCH', `/api/records/${rid}`, p),
   deleteRecord: (rid) => call('DELETE', `/api/records/${rid}`),
-  rates: (base) => call('GET', `/api/rates?base=${base}`),
+  rates: (base, date) => call('GET', `/api/rates?base=${base}${date ? `&date=${date}` : ''}`),
   notifyGroup: (lid, messages) => call('POST', `/api/ledgers/${lid}/notify`, { messages }),
 };
 
@@ -56,7 +58,7 @@ function seed() {
     r({ type: 'expense', title: '唐吉訶德', category: 'shopping', amount: 8600, currency: 'JPY', rate: 0.213, payerId: 'm3', split: { mode: 'amount', parts: { m3: 5000, m2: 3600 } }, date: '2026-12-03' }),
   ];
   return {
-    ledgers: [{ id: L, name: '東京五日遊', baseCurrency: 'TWD', groupId: null, createdBy: 'demo', fundEnabled: 1, fundCustodian: 'm0', shareDefault: 1, archived: 0, createdAt: now(), updatedAt: now() }],
+    ledgers: [{ id: L, name: '東京五日遊', baseCurrency: 'TWD', groupId: null, createdBy: 'demo', fundEnabled: 1, fundCustodian: 'm0', shareDefault: 1, archived: 0, fixedRates: {}, createdAt: now(), updatedAt: now() }],
     members: m, records,
   };
 }
@@ -79,7 +81,7 @@ const demo = {
     return { ledger, members: db.members.filter((x) => x.ledgerId === id), records: db.records.filter((r) => r.ledgerId === id && !r.deleted) };
   }),
   createLedger: (d) => mutate((db) => {
-    const l = { id: uid(), name: d.name, baseCurrency: d.baseCurrency || 'TWD', groupId: d.groupId || null, createdBy: me(), fundEnabled: 0, fundCustodian: null, shareDefault: 1, archived: 0, createdAt: now(), updatedAt: now() };
+    const l = { id: uid(), name: d.name, baseCurrency: d.baseCurrency || 'TWD', groupId: d.groupId || null, createdBy: me(), fundEnabled: 0, fundCustodian: null, shareDefault: 1, archived: 0, fixedRates: {}, createdAt: now(), updatedAt: now() };
     db.ledgers.unshift(l);
     (d.members || []).forEach((name, i) => db.members.push({ id: uid(), ledgerId: l.id, name, lineUserId: i === 0 && d.claimFirst ? me() : null, avatar: i === 0 && d.claimFirst ? line.profile.pictureUrl : '', payInfo: {}, active: 1 }));
     return l;
@@ -108,7 +110,8 @@ const demo = {
   addRecord: (lid, r) => mutate((db) => { const x = { ...r, id: uid(), ledgerId: lid, createdBy: me(), createdAt: now(), updatedAt: now() }; db.records.push(x); return x; }),
   updateRecord: (rid, p) => mutate((db) => Object.assign(db.records.find((r) => r.id === rid), p, { updatedAt: now() })),
   deleteRecord: (rid) => mutate((db) => { db.records.find((r) => r.id === rid).deleted = 1; return { ok: true }; }),
-  rates: (base) => wait(Object.fromEntries(Object.entries(DEMO_RATES).map(([k, v]) => [k, v / DEMO_RATES[base]]))),
+  // 示範模式用固定匯率，並依日期做一點小波動，方便看出「當日匯率」效果
+  rates: (base, date) => { const j = date ? 1 + ((Number(date.slice(-2)) % 7) - 3) / 300 : 1; return wait({ date: date || new Date().toISOString().slice(0, 10), rates: Object.fromEntries(Object.entries(DEMO_RATES).map(([k, v]) => [k, k === base ? 1 : (v * j) / DEMO_RATES[base]])) }); },
   notifyGroup: () => wait({ ok: false }),
   reset: () => { localStorage.removeItem(KEY); return wait(true); },
 };

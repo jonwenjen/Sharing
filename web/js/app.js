@@ -1,9 +1,9 @@
 // Sharing 主程式：帳本列表、帳本（明細／結算／統計／成員）、記帳編輯器
-import { line, initLine, ledgerUrl, sendToChat, pickAndShare, canSendToChat } from './line.js';
+import { line, initLine, ledgerUrl, sendToChat, pickAndShare, canSendToChat, inLineApp, openExternal, webUrl } from './line.js';
 import { store } from './store.js';
 import { h, mount, fitText, icon, avatar, toast, sheet, confirmBox, copyText, download } from './ui.js';
 import {
-  CURRENCIES, CATEGORIES, FUND_ID, categoryOf, formatMoney, formatMinor, recordShares,
+  CURRENCIES, CATEGORIES, FUND_ID, categoryOf, formatMoney, formatMinor, fromMinor, decimalsOf, recordShares,
   settlementBalances, fundCash, stats, validateRecord,
 } from './money.js';
 import { minTransfers } from './settle.js';
@@ -26,7 +26,7 @@ async function run(fn, okMsg) {
 }
 function setUrl(params) {
   const u = new URL(location.href);
-  ['l', 'g'].forEach((k) => u.searchParams.delete(k));
+  ['l', 'g', 'r', 'tab'].forEach((k) => u.searchParams.delete(k));
   for (const [k, v] of Object.entries(params)) if (v) u.searchParams.set(k, v);
   history.replaceState(null, '', u);
 }
@@ -170,7 +170,19 @@ function settleTab(net, fundUnassigned) {
     out.push(h('div', { class: 'empty done' }, h('p', { class: 'big' }, '已經結清'), h('p', { class: 'hint' }, '目前沒有人需要轉帳。')));
     return out;
   }
-  out.push(h('p', { class: 'settle-sum' }, `只要 ${transfers.length} 筆轉帳就能全部結清`));
+  const dc = S.settleCur || b;
+  const lr = S.rates[`${b}|latest`];
+  if (dc !== b && !lr) store.rates(b).then((t) => { S.rates[`${b}|latest`] = t; renderLedger(); }).catch(() => toast('暫時取不到匯率', 'err'));
+  const rateOf = (c) => lr && (lr.rates || lr)[c];
+  const show = (minor) => {
+    if (dc === b || !rateOf(dc)) return formatMinor(minor, b);
+    const d = decimalsOf(dc);
+    return formatMoney(Math.round((fromMinor(minor, b) / rateOf(dc)) * 10 ** d) / 10 ** d, dc);
+  };
+  const curSel = h('select', { class: 'input cur compact', 'aria-label': '顯示幣別', onchange: (e) => { S.settleCur = e.target.value; renderLedger(); } },
+    Object.keys(CURRENCIES).map((k) => h('option', { value: k, selected: k === dc }, k)));
+  out.push(h('div', { class: 'row between settle-head' }, h('p', { class: 'settle-sum' }, `只要 ${transfers.length} 筆轉帳就能全部結清`), curSel));
+  if (dc !== b) out.push(h('p', { class: 'hint' }, lr ? `以 ${lr.date || '今日'} 匯率從 ${b} 換算，僅供參考；「記為已付款」仍以 ${b} 記錄。` : '載入匯率中…'));
   out.push(h('ul', { class: 'xfer-list' }, transfers.map((t) => {
     const to = S.members.find((m) => m.id === t.to) || { name: memberName(t.to), payInfo: {} };
     const from = S.members.find((m) => m.id === t.from) || { name: memberName(t.from) };
@@ -185,7 +197,7 @@ function settleTab(net, fundUnassigned) {
     return h('li', { class: `xfer ${involvesMe ? 'mine' : ''}` },
       h('div', { class: 'xfer-row' },
         h('span', { class: 'xfer-p' }, avatar(from, 34), h('span', {}, from.name)),
-        h('span', { class: 'xfer-mid' }, h('strong', {}, formatMinor(t.amount, b)), h('span', { class: 'xfer-line' }, icon('arrow', 16))),
+        h('span', { class: 'xfer-mid' }, h('strong', {}, show(t.amount)), dc !== b && rateOf(dc) ? h('small', { class: 'hint' }, formatMinor(t.amount, b)) : null, h('span', { class: 'xfer-line' }, icon('arrow', 16))),
         h('span', { class: 'xfer-p' }, avatar(to, 34), h('span', {}, to.name))),
       payRows.length
         ? h('dl', { class: 'payinfo' }, payRows.map(([k, v, c]) => [h('dt', {}, k), h('dd', {}, h('span', {}, v), c ? h('button', { class: 'icon-btn sm', 'aria-label': `複製${k}`, onclick: () => copyText(c) }, icon('copy', 16)) : null)]))
@@ -193,7 +205,7 @@ function settleTab(net, fundUnassigned) {
       h('button', { class: 'btn ghost sm', onclick: () => markPaid(t) }, icon('check', 16), '記為已付款'));
   })));
   out.push(h('button', { class: 'btn ghost block', onclick: async () => {
-    const msg = { type: 'text', text: settleText(S.ledger, S.members, transfers) };
+    const msg = { type: 'text', text: settleText(S.ledger, S.members, transfers, show) };
     if (await sendToChat([msg])) return toast('已分享到 LINE');
     if (await pickAndShare([msg])) return toast('已分享到 LINE');
     copyText(msg.text, '已複製結算結果，可貼到 LINE');
@@ -214,37 +226,111 @@ async function markPaid(t) {
 // ---- 統計 ----
 function statsTab(st, net) {
   const b = base();
-  const scopeMine = S.scope === 'me' && S.meId;
-  let byCat = st.byCategory, total = st.total;
-  if (scopeMine) {
-    byCat = {}; total = 0;
-    S.records.filter((r) => r.type === 'expense').forEach((r) => { const v = recordShares(r, b).shares[S.meId] || 0; if (v) { byCat[r.category] = (byCat[r.category] || 0) + v; total += v; } });
-  }
+  const mine = S.scope === 'me' && S.meId;
+  const exp = S.records.filter((r) => r.type === 'expense');
+  // 以目前範圍（全體／我的）計算每筆支出的金額
+  const rows = exp.map((r) => { const x = recordShares(r, b); return { r, v: mine ? x.shares[S.meId] || 0 : x.total, shares: x.shares }; }).filter((x) => x.v);
+  const total = rows.reduce((a, x) => a + x.v, 0);
+  const byCat = {}, byDay = {};
+  rows.forEach(({ r, v }) => { byCat[r.category] = (byCat[r.category] || 0) + v; byDay[r.date] = (byDay[r.date] || 0) + v; });
+  const days = dayRange(Object.keys(byDay));
+  const people = S.members.filter((m) => st.people[m.id] && st.people[m.id].share);
   const cats = Object.entries(byCat).sort((x, y) => y[1] - x[1]);
   const max = cats.length ? cats[0][1] : 1;
   const seg = h('div', { class: 'seg' }, [['all', '全體'], ['me', '我的']].map(([k, label]) => h('button', {
     class: (S.scope === k ? 'on' : ''), disabled: k === 'me' && !S.meId, onclick: () => { S.scope = k; renderLedger(); },
   }, label)));
+  if (!rows.length) return [seg, h('p', { class: 'hint center' }, '還沒有支出可以統計。'), exportBox(net)];
+  const kpi = (label, value) => h('div', { class: 'kpi' }, h('span', {}, label), h('strong', {}, value));
   return [
     seg,
-    h('div', { class: 'stat-total' }, h('span', { class: 't-label' }, scopeMine ? '我分攤的支出' : '團體總支出'), h('strong', {}, formatMinor(total, b))),
-    cats.length ? h('ul', { class: 'bars' }, cats.map(([c, v]) => h('li', {},
+    h('div', { class: 'stat-total' }, h('span', { class: 't-label' }, mine ? '我分攤的支出' : '團體總支出'), h('strong', {}, formatMinor(total, b))),
+    h('div', { class: 'kpis' },
+      kpi('每日平均', formatMinor(Math.round(total / days.length), b)),
+      mine ? kpi('占團體', `${st.total ? Math.round((total / st.total) * 100) : 0}%`) : kpi('每人平均', formatMinor(Math.round(total / Math.max(1, people.length)), b)),
+      kpi('天數', `${days.length} 天`), kpi('筆數', `${rows.length} 筆`)),
+    h('h3', { class: 'sec-title' }, '每日花費'),
+    trendChart(days, byDay, b),
+    h('h3', { class: 'sec-title' }, '分類'),
+    h('ul', { class: 'bars' }, cats.map(([c, v]) => h('li', {},
       h('span', { class: 'bar-label' }, `${categoryOf(c).icon} ${categoryOf(c).name}`),
       h('span', { class: 'bar-track' }, h('span', { class: 'bar-fill', style: `width:${Math.max(3, (v / max) * 100)}%` })),
-      h('span', { class: 'bar-val' }, formatMinor(v, b), h('small', {}, `${total ? Math.round((v / total) * 100) : 0}%`))))) : h('p', { class: 'hint' }, '還沒有支出可以統計。'),
-    h('h3', { class: 'sec-title' }, '每個人'),
-    h('div', { class: 'table-wrap' }, h('table', { class: 'people' },
-      h('thead', {}, h('tr', {}, h('th', {}, '成員'), h('th', {}, '代墊'), h('th', {}, '分攤'), h('th', {}, '結算'))),
-      h('tbody', {}, S.members.filter((m) => m.active || st.people[m.id]).map((m) => {
-        const p = st.people[m.id] || { paid: 0, share: 0 };
-        const n = net[m.id] || 0;
-        return h('tr', { class: m.id === S.meId ? 'me' : '' }, h('td', {}, m.name), h('td', {}, formatMinor(p.paid, b)), h('td', {}, formatMinor(p.share, b)), h('td', { class: n > 0 ? 'pos' : n < 0 ? 'neg' : '' }, formatMinor(n, b, { sign: true })));
-      })))),
-    h('div', { class: 'export' },
-      h('button', { class: 'btn ghost', onclick: () => download(`${S.ledger.name}-明細.csv`, recordsCsv(S.ledger, S.members, S.records)) }, icon('down', 18), '匯出明細'),
-      h('button', { class: 'btn ghost', onclick: () => download(`${S.ledger.name}-統計.csv`, summaryCsv(S.ledger, S.members, S.records, net)) }, icon('down', 18), '匯出統計')),
-    h('p', { class: 'hint center' }, 'CSV 可直接用 Excel 或 Google 試算表開啟。在 LINE 內無法下載時，請點右上角用外部瀏覽器開啟。'),
+      h('span', { class: 'bar-val' }, formatMinor(v, b), h('small', {}, `${Math.round((v / total) * 100)}%`))))),
+    h('h3', { class: 'sec-title' }, '前 5 大支出'),
+    h('ol', { class: 'top5' }, [...rows].sort((x, y) => y.v - x.v).slice(0, 5).map(({ r, v }) => h('li', {}, h('button', { class: 'rec', onclick: () => editor(r) },
+      h('span', { class: 'rec-ic' }, categoryOf(r.category).icon),
+      h('span', { class: 'rec-main' }, h('strong', {}, r.title), h('small', {}, `${r.date.slice(5).replace('-', '/')}，${memberName(r.payerId)} 先付`)),
+      h('span', { class: 'rec-amt' }, h('strong', {}, formatMinor(v, b))))))),
+    mine ? null : [
+      h('h3', { class: 'sec-title' }, '每人 × 分類'),
+      crossTable(exp, people, b),
+      h('h3', { class: 'sec-title' }, '每個人'),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'people' },
+        h('thead', {}, h('tr', {}, h('th', {}, '成員'), h('th', {}, '代墊'), h('th', {}, '分攤'), h('th', {}, '結算'))),
+        h('tbody', {}, S.members.filter((m) => m.active || st.people[m.id]).map((m) => {
+          const p = st.people[m.id] || { paid: 0, share: 0 };
+          const n = net[m.id] || 0;
+          return h('tr', { class: m.id === S.meId ? 'me' : '' }, h('td', {}, m.name), h('td', {}, formatMinor(p.paid, b)), h('td', {}, formatMinor(p.share, b)), h('td', { class: n > 0 ? 'pos' : n < 0 ? 'neg' : '' }, formatMinor(n, b, { sign: true })));
+        })))),
+    ],
+    exportBox(net),
   ];
+}
+
+function dayRange(dates) {
+  if (!dates.length) return [];
+  const sorted = [...dates].sort();
+  const out = [];
+  for (let d = new Date(sorted[0] + 'T00:00:00Z'), end = new Date(sorted.at(-1) + 'T00:00:00Z'); d <= end && out.length < 366; d.setUTCDate(d.getUTCDate() + 1)) out.push(d.toISOString().slice(0, 10));
+  return out;
+}
+
+function trendChart(days, byDay, b) {
+  const W = 340, H = 150, top = 22, bottom = 22;
+  const vals = days.map((d) => byDay[d] || 0);
+  const mx = Math.max(...vals, 1);
+  const bw = W / days.length;
+  const every = Math.ceil(days.length / 8);
+  const peak = vals.indexOf(mx);
+  const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="每日花費長條圖" class="trend">
+    ${vals.map((v, i) => { const hh = v ? Math.max(2, (v / mx) * (H - top - bottom)) : 0; return `<rect x="${i * bw + bw * 0.18}" y="${H - bottom - hh}" width="${bw * 0.64}" height="${hh}" rx="3" class="${i === peak ? 'peak' : ''}"><title>${days[i]}：${formatMinor(v, b)}</title></rect>`; }).join('')}
+    <line x1="0" x2="${W}" y1="${H - bottom + 0.5}" y2="${H - bottom + 0.5}" class="axis"/>
+    ${days.map((d, i) => (i % every === 0 || i === days.length - 1 ? `<text x="${i * bw + bw / 2}" y="${H - 6}" text-anchor="middle">${Number(d.slice(5, 7))}/${Number(d.slice(8))}</text>` : '')).join('')}
+    <text x="${Math.min(Math.max(peak * bw + bw / 2, 30), W - 30)}" y="14" text-anchor="middle" class="peak-label">${formatMinor(mx, b)}</text>
+  </svg>`;
+  return h('div', { class: 'trend-wrap', html: svg });
+}
+
+function crossTable(exp, people, b) {
+  const cell = {};
+  const catTotals = {};
+  exp.forEach((r) => {
+    const { shares } = recordShares(r, b);
+    for (const [id, v] of Object.entries(shares)) { cell[id] = cell[id] || {}; cell[id][r.category] = (cell[id][r.category] || 0) + v; catTotals[r.category] = (catTotals[r.category] || 0) + v; }
+  });
+  const cats = Object.keys(catTotals).sort((x, y) => catTotals[y] - catTotals[x]);
+  const short = (v) => (v ? formatMinor(v, b).replace(/^[^\d-]+/, '') : '–');
+  return h('div', { class: 'table-wrap' }, h('table', { class: 'people cross' },
+    h('thead', {}, h('tr', {}, h('th', {}, '成員'), cats.map((c) => h('th', { title: categoryOf(c).name }, `${categoryOf(c).icon} ${categoryOf(c).name}`)))),
+    h('tbody', {}, people.map((m) => h('tr', { class: m.id === S.meId ? 'me' : '' }, h('td', {}, m.name), cats.map((c) => h('td', {}, short((cell[m.id] || {})[c]))))))),
+  );
+}
+
+function exportBox(net) {
+  const csvName = (k) => `${S.ledger.name}-${k}.csv`;
+  const copyTable = () => copyText(recordsCsv(S.ledger, S.members, S.records, '\t'), '已複製表格，可直接貼到 Google 試算表或 Excel');
+  if (inLineApp()) {
+    return h('div', { class: 'export-box' },
+      h('p', { class: 'hint' }, 'LINE 內無法下載檔案。可以用瀏覽器開啟後下載，或複製表格直接貼到試算表。'),
+      h('button', { class: 'btn primary block', onclick: () => openExternal(webUrl({ l: S.ledger.id, tab: 'stats' })) }, icon('share', 18), '用瀏覽器開啟並下載'),
+      h('button', { class: 'btn ghost block', onclick: copyTable }, icon('copy', 18), '複製表格'));
+  }
+  return h('div', { class: 'export-box' },
+    h('div', { class: 'export' },
+      h('button', { class: 'btn ghost', onclick: () => download(csvName('明細'), recordsCsv(S.ledger, S.members, S.records)) }, icon('down', 18), '匯出明細'),
+      h('button', { class: 'btn ghost', onclick: () => download(csvName('統計'), summaryCsv(S.ledger, S.members, S.records, net)) }, icon('down', 18), '匯出統計')),
+    h('button', { class: 'btn ghost block', onclick: copyTable }, icon('copy', 18), '複製表格'),
+    h('p', { class: 'hint center' }, 'CSV 可用 Excel 或 Google 試算表開啟；「複製表格」可直接貼上。'));
 }
 
 // ---- 成員 ----
@@ -335,12 +421,31 @@ function settingsSheet() {
   const cur = currencySelect(S.ledger.baseCurrency);
   cur.disabled = S.records.length > 0;
   const share = h('input', { type: 'checkbox', class: 'switch', checked: !!S.ledger.shareDefault });
+  const fr = { ...(S.ledger.fixedRates || {}) };
+  const frBox = h('div', { class: 'fr-list' });
+  const addSel = h('select', { class: 'input cur compact', 'aria-label': '選擇要固定的幣別' }, Object.keys(CURRENCIES).filter((c) => c !== S.ledger.baseCurrency).map((c) => h('option', { value: c }, c)));
+  const drawFr = () => mount(frBox,
+    Object.entries(fr).map(([c, v]) => h('div', { class: 'row gap fr-row' },
+      h('span', { class: 'fr-cur' }, `1 ${c} =`),
+      h('input', { class: 'input rate', inputmode: 'decimal', value: v, 'aria-label': `${c} 固定匯率`, oninput: (e) => (fr[c] = e.target.value) }),
+      h('span', {}, S.ledger.baseCurrency),
+      h('button', { class: 'icon-btn sm', 'aria-label': `移除 ${c} 固定匯率`, onclick: () => { delete fr[c]; drawFr(); } }, icon('x', 16)))),
+    h('div', { class: 'row gap' }, addSel, h('button', { class: 'btn ghost sm', onclick: async () => {
+      const c = addSel.value;
+      if (fr[c] !== undefined) return;
+      const t = await store.rates(S.ledger.baseCurrency).catch(() => null);
+      const v = t && (t.rates || t)[c];
+      fr[c] = v ? +Number(v).toPrecision(6) : '';
+      drawFr();
+    } }, icon('plus', 16), '加入固定匯率')));
+  drawFr();
   const close = sheet('帳本設定', h('div', { class: 'form' },
     field('帳本名稱', name),
     field('結算幣別', cur, S.records.length ? '已有紀錄，無法更改結算幣別。' : null),
+    field('固定匯率（選用）', frBox, '例如出發前換日圓的匯率。設定後記這個幣別會自動帶入，已記的帳不受影響。'),
     h('label', { class: 'row between' }, h('span', {}, '記帳後預設分享到 LINE'), share),
     h('button', { class: 'btn primary block', onclick: async () => {
-      await run(() => store.updateLedger(S.ledger.id, { name: name.value.trim() || S.ledger.name, baseCurrency: cur.value, shareDefault: share.checked ? 1 : 0 }), '已儲存'); close(); reload();
+      await run(() => store.updateLedger(S.ledger.id, { name: name.value.trim() || S.ledger.name, baseCurrency: cur.value, shareDefault: share.checked ? 1 : 0, fixedRates: Object.fromEntries(Object.entries(fr).filter(([, v]) => Number(v) > 0).map(([c, v]) => [c, Number(v)])) }), '已儲存'); close(); reload();
     } }, '儲存'),
     h('button', { class: 'btn ghost block', onclick: () => copyText(ledgerUrl(S.ledger.id), '已複製帳本連結') }, icon('copy', 18), '複製帳本連結'),
     h('button', { class: 'btn ghost block', onclick: async () => { await run(() => store.updateLedger(S.ledger.id, { archived: S.ledger.archived ? 0 : 1 }), S.ledger.archived ? '已取消封存' : '已封存'); close(); reload(); } }, S.ledger.archived ? '取消封存' : '封存帳本（不能再新增紀錄）'),
@@ -366,20 +471,38 @@ function editor(rec, presetType) {
 
   const amount = h('input', { class: 'amount-input', inputmode: 'decimal', placeholder: '0', value: r.amount, 'aria-label': '金額', oninput: () => { r.amount = amount.value; drawSplit(); drawRate(); } });
   const cur = currencySelect(r.currency, true);
-  cur.onchange = async () => { r.currency = cur.value; S._lastCur = cur.value; await ensureRate(); drawRate(); drawSplit(); };
+  cur.onchange = async () => { r.currency = cur.value; S._lastCur = cur.value; rateSrc = ''; await ensureRate({ force: true }); drawRate(); drawSplit(); };
   const rateBox = h('div', {});
-  const ensureRate = async () => {
-    if (r.currency === b) { r.rate = 1; return; }
-    if (!S.rates[b]) S.rates[b] = await store.rates(b).catch(() => ({}));
-    if (!editing || rec.currency !== r.currency) r.rate = +(S.rates[b][r.currency] || r.rate || 0).toPrecision(6);
+  // 匯率來源：fixed＝帳本固定、date＝消費日匯率、manual＝手動、saved＝原本存的
+  let rateSrc = editing ? 'saved' : '';
+  let rateDate = '';
+  const fetchRates = async (d) => {
+    const k = `${b}|${d}`;
+    if (!S.rates[k]) S.rates[k] = await store.rates(b, d).catch(() => null);
+    return S.rates[k];
+  };
+  const ensureRate = async ({ force = false } = {}) => {
+    if (r.currency === b) { r.rate = 1; rateSrc = ''; return; }
+    if (!force && (rateSrc === 'manual' || rateSrc === 'saved')) return;
+    const fixed = (S.ledger.fixedRates || {})[r.currency];
+    if (fixed) { r.rate = fixed; rateSrc = 'fixed'; return; }
+    const t = await fetchRates(r.date);
+    const v = t && (t.rates || t)[r.currency];
+    if (v) { r.rate = +Number(v).toPrecision(6); rateSrc = 'date'; rateDate = t.date || r.date; }
   };
   const drawRate = () => {
     if (r.currency === b) return rateBox.replaceChildren();
-    const inp = h('input', { class: 'input rate', inputmode: 'decimal', value: r.rate, 'aria-label': '匯率', oninput: () => { r.rate = inp.value; drawSplit(); drawConv(); } });
+    const inp = h('input', { class: 'input rate', inputmode: 'decimal', value: r.rate, 'aria-label': '匯率', oninput: () => { r.rate = inp.value; rateSrc = 'manual'; drawSplit(); drawConv(); drawSrc(); } });
     const conv = h('span', { class: 'hint' });
+    const src = h('div', { class: 'rate-src' });
     const drawConv = () => conv.textContent = Number(r.amount) > 0 && Number(r.rate) > 0 ? `約 ${formatMinor(recordShares({ ...r, split: { mode: 'equal', parts: {} } }, b).total, b)}` : '';
-    drawConv();
-    rateBox.replaceChildren(h('div', { class: 'rate-row' }, h('span', {}, `1 ${r.currency} =`), inp, h('span', {}, b), conv));
+    const drawSrc = () => {
+      const label = { fixed: '使用帳本固定匯率', date: rateDate && rateDate !== r.date ? `${r.date} 沒有資料，使用 ${rateDate} 匯率` : `${r.date} 當日匯率`, manual: '手動輸入', saved: '原本儲存的匯率' }[rateSrc] || '';
+      mount(src, h('small', { class: 'hint' }, label),
+        rateSrc === 'manual' || rateSrc === 'saved' ? h('button', { class: 'link', onclick: async () => { rateSrc = ''; await ensureRate({ force: true }); drawRate(); drawSplit(); } }, '改用當日匯率') : null);
+    };
+    drawConv(); drawSrc();
+    rateBox.replaceChildren(h('div', { class: 'rate-row' }, h('span', {}, `1 ${r.currency} =`), inp, h('span', {}, b), conv), src);
   };
 
   const typeSeg = h('div', { class: 'seg' }, [['expense', '支出'], ['transfer', '轉帳'], ...(S.ledger.fundEnabled ? [['fund_in', '存入公費']] : [])].map(([k, label]) =>
@@ -393,7 +516,10 @@ function editor(rec, presetType) {
     } }, label)));
 
   const title = h('input', { class: 'input', placeholder: '項目名稱，例如：晚餐', value: r.title, maxlength: 40, oninput: () => (r.title = title.value) });
-  const date = h('input', { class: 'input', type: 'date', value: r.date, onchange: () => (r.date = date.value) });
+  const date = h('input', { class: 'input', type: 'date', value: r.date, onchange: async () => {
+    r.date = date.value;
+    if (r.currency !== b && rateSrc !== 'manual') { await ensureRate({ force: true }); drawRate(); drawSplit(); }
+  } });
   const note = h('input', { class: 'input', placeholder: '備註（選填）', value: r.note || '', maxlength: 120, oninput: () => (r.note = note.value) });
   const splitBox = h('div', {});
 
@@ -518,7 +644,13 @@ async function shareRecord(action, rec) {
     const qs = new URLSearchParams(location.search);
     S.groupId = qs.get('g');
     const l = qs.get('l');
-    if (l) await openLedger(l); else await home();
+    if (['list', 'settle', 'stats', 'members'].includes(qs.get('tab'))) S.tab = qs.get('tab');
+    if (l) {
+      await openLedger(l);
+      const rid = qs.get('r');
+      const rec = rid && S.records.find((x) => x.id === rid);
+      if (rec) editor(rec);
+    } else await home();
   } catch (e) {
     console.error(e);
     app.replaceChildren(h('div', { class: 'empty fatal' }, h('p', { class: 'big' }, '無法開啟 Sharing'), h('p', {}, e.message || String(e)), h('button', { class: 'btn primary', onclick: () => location.reload() }, '重新載入')));
