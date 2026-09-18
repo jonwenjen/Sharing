@@ -34,6 +34,9 @@ cd web && python3 -m http.server 8080   # 開 http://localhost:8080
 
 ### 1. 推到 GitHub
 ```bash
+git config --global user.name "jonwenjen"
+git config --global user.email "jonwenjen@gmail.com"
+
 git init && git add . && git commit -m "Sharing v1"
 git branch -M main
 git remote add origin https://github.com/jonwenjen/Sharing.git
@@ -47,22 +50,21 @@ git push -u origin main
    - Size：`Full`；Endpoint URL：`https://jonwenjen.github.io/Sharing/`
    - Scopes：勾 `profile`、`openid`、`chat_message.write`
    - 打開 **Share Target Picker**
-   - 記下 **LIFF ID** 與此 channel 的 **Channel ID**
+   - 記下 **LIFF ID** 與此 channel 的 **Channel ID** 
 3. 建一個 **Messaging API** channel（記帳機器人）：
-   - 記下 **Channel secret**，並發行 **Channel access token (long-lived)**
-   - 在 LINE Official Account Manager 開啟「允許加入群組」、關閉自動回應訊息
+   - 記下 **Channel secret**  ，並發行 **Channel access token (long-lived)**   
    - 把 LINE Login channel 與此官方帳號綁定（LINE Login → Linked OA）
 
 ### 3. 部署後端（Cloudflare，免費方案即可）
 ```bash
 cd worker && npm install
 npx wrangler login
-npx wrangler d1 create sharing           # 把輸出的 database_id 填進 wrangler.toml
+npx wrangler d1 create sharing           # 把輸出的 database_id    填進 wrangler.toml
 npm run db:init
-npx wrangler secret put LINE_CHANNEL_SECRET
-npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
+npx wrangler secret put
+npx wrangler secret put 
 # 編輯 wrangler.toml 的 LIFF_ID、LINE_LOGIN_CHANNEL_ID
-npm run deploy                            # 記下 https://sharing-api.xxx.workers.dev
+npm run deploy                            # 記下 
 ```
 回 Messaging API channel，Webhook URL 填 `https://sharing-api.xxx.workers.dev/webhook`，開啟 **Use webhook**。
 
@@ -91,3 +93,4 @@ npm run build:demo     # 產生單檔示範版 dist/demo.html
 - [docs/PLAN.md](docs/PLAN.md)：規劃、角色分工與目標
 - [docs/QA-REPORT.md](docs/QA-REPORT.md)：驗證報告
 - [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)：驗收結果
+
