@@ -5,7 +5,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:init": "wrangler d1 execute sharing --remote --file=schema.sql"
+    "db:init": "wrangler d1 execute sharing --remote --file=schema.sql",
+    "db:migrate": "wrangler d1 execute sharing --remote --file=migrations/001_fixed_rates.sql"
   },
-  "devDependencies": { "wrangler": "^4.0.0" }
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
 }

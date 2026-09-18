@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS ledgers (
   share_default INTEGER NOT NULL DEFAULT 1,
   archived INTEGER NOT NULL DEFAULT 0,
   deleted INTEGER NOT NULL DEFAULT 0,
+  fixed_rates TEXT DEFAULT '{}',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
