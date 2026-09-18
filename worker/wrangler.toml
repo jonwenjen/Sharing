@@ -5,8 +5,8 @@ compatibility_date = "2026-09-01"
 [vars]
 # 前端網址（GitHub Pages），多個用逗號分隔
 ALLOWED_ORIGINS = "https://jonwenjen.github.io"
-LIFF_ID = "請填入 LIFF ID"
-LINE_LOGIN_CHANNEL_ID = "請填入 LINE Login Channel ID"
+LIFF_ID = "2011659315-MlgnLpFZ"
+LINE_LOGIN_CHANNEL_ID = "2011659315"
 DEV_MODE = "0"
 
 # 機密請用 `npx wrangler secret put` 設定：
@@ -15,4 +15,4 @@ DEV_MODE = "0"
 [[d1_databases]]
 binding = "DB"
 database_name = "sharing"
-database_id = "請填入 wrangler d1 create 產生的 id"
+database_id = "a08deb83-80b2-439c-8f2a-5797796ea1ae"
