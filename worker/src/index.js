@@ -463,9 +463,22 @@ async function insertRecord(env, lid, r, sub) {
 }
 const touch = (env, lid) => env.DB.prepare('UPDATE ledgers SET updated_at = ? WHERE id = ?').bind(now(), lid).run();
 
+// 自動補齊舊版資料庫缺少的欄位（每個執行個體只檢查一次，免手動 migrate）
+let schemaChecked = false;
+export async function ensureSchema(env) {
+  if (schemaChecked || !env.DB) return;
+  try { await env.DB.prepare('SELECT fixed_rates FROM ledgers LIMIT 1').first(); }
+  catch {
+    try { await env.DB.prepare("ALTER TABLE ledgers ADD COLUMN fixed_rates TEXT DEFAULT '{}'").run(); console.log('[schema] 已新增 ledgers.fixed_rates'); }
+    catch (e) { console.error('[schema] 無法新增欄位', e); return; }
+  }
+  schemaChecked = true;
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
+    await ensureSchema(env);
     const h = cors(env, req);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
     try {
