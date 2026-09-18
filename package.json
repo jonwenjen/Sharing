@@ -1,0 +1,12 @@
+{
+  "name": "sharing",
+  "private": true,
+  "type": "module",
+  "description": "LINE 分帳記帳：LIFF 前端 + Cloudflare Worker 後端",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "test:e2e": "python3 tests/e2e.py",
+    "build:demo": "node scripts/build-demo.mjs"
+  },
+  "engines": { "node": ">=22.5" }
+}

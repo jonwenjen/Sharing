@@ -1,0 +1,18 @@
+name = "sharing-api"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+# 前端網址（GitHub Pages），多個用逗號分隔
+ALLOWED_ORIGINS = "https://jonwenjen.github.io"
+LIFF_ID = "請填入 LIFF ID"
+LINE_LOGIN_CHANNEL_ID = "請填入 LINE Login Channel ID"
+DEV_MODE = "0"
+
+# 機密請用 `npx wrangler secret put` 設定：
+#   LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sharing"
+database_id = "請填入 wrangler d1 create 產生的 id"

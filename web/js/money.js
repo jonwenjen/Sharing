@@ -1,0 +1,143 @@
+// 幣別、金額格式化與分攤計算（前後端共用，純函式、無相依）
+export const FUND_ID = '__fund';
+
+export const CURRENCIES = {
+  TWD: { name: '新台幣', symbol: 'NT$', decimals: 0 },
+  JPY: { name: '日圓', symbol: '¥', decimals: 0 },
+  USD: { name: '美元', symbol: 'US$', decimals: 2 },
+  EUR: { name: '歐元', symbol: '€', decimals: 2 },
+  KRW: { name: '韓圓', symbol: '₩', decimals: 0 },
+  HKD: { name: '港幣', symbol: 'HK$', decimals: 2 },
+  CNY: { name: '人民幣', symbol: 'CN¥', decimals: 2 },
+  THB: { name: '泰銖', symbol: '฿', decimals: 2 },
+  SGD: { name: '新加坡幣', symbol: 'S$', decimals: 2 },
+  GBP: { name: '英鎊', symbol: '£', decimals: 2 },
+  AUD: { name: '澳幣', symbol: 'A$', decimals: 2 },
+  CAD: { name: '加幣', symbol: 'C$', decimals: 2 },
+  MYR: { name: '馬幣', symbol: 'RM', decimals: 2 },
+  VND: { name: '越南盾', symbol: '₫', decimals: 0 },
+  PHP: { name: '披索', symbol: '₱', decimals: 2 },
+};
+
+export const CATEGORIES = [
+  { id: 'food', name: '餐飲', icon: '🍜' },
+  { id: 'transport', name: '交通', icon: '🚃' },
+  { id: 'stay', name: '住宿', icon: '🏨' },
+  { id: 'ticket', name: '門票活動', icon: '🎟️' },
+  { id: 'shopping', name: '購物', icon: '🛍️' },
+  { id: 'fun', name: '娛樂', icon: '🎤' },
+  { id: 'daily', name: '日用品', icon: '🧴' },
+  { id: 'other', name: '其他', icon: '📦' },
+];
+export const categoryOf = (id) => CATEGORIES.find((c) => c.id === id) || CATEGORIES[CATEGORIES.length - 1];
+
+export const decimalsOf = (cur) => (CURRENCIES[cur] ? CURRENCIES[cur].decimals : 2);
+export const toMinor = (amount, cur) => Math.round(Number(amount) * 10 ** decimalsOf(cur));
+export const fromMinor = (minor, cur) => minor / 10 ** decimalsOf(cur);
+
+export function formatMoney(amount, cur, { sign = false } = {}) {
+  const d = decimalsOf(cur);
+  const c = CURRENCIES[cur];
+  const abs = Math.abs(amount).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const s = amount < 0 ? '-' : sign && amount > 0 ? '+' : '';
+  return `${s}${c ? c.symbol : cur + ' '}${abs}`;
+}
+export const formatMinor = (minor, cur, opt) => formatMoney(fromMinor(minor, cur), cur, opt);
+
+/** 依權重以最大餘數法分配整數（總和必等於 total），同分時依輸入順序 */
+export function allocate(total, weights) {
+  const entries = Object.entries(weights).filter(([, w]) => Number(w) > 0);
+  const sumW = entries.reduce((s, [, w]) => s + Number(w), 0);
+  const out = {};
+  if (!entries.length || sumW <= 0) return out;
+  const sign = total < 0 ? -1 : 1;
+  const T = Math.abs(total);
+  let used = 0;
+  const rema = entries.map(([id, w], i) => {
+    const exact = (T * Number(w)) / sumW;
+    const floor = Math.floor(exact + 1e-9);
+    used += floor;
+    out[id] = floor;
+    return { id, r: exact - floor, i };
+  });
+  rema.sort((a, b) => b.r - a.r || a.i - b.i);
+  for (let k = 0; k < T - used; k++) out[rema[k % rema.length].id] += 1;
+  if (sign < 0) for (const id in out) out[id] = -out[id];
+  return out;
+}
+
+/** 單筆紀錄換算為基準幣別的最小單位總額 */
+export const recordBaseMinor = (rec, base) =>
+  toMinor(Number(rec.amount) * (rec.currency === base ? 1 : Number(rec.rate || 0)), base);
+
+/** 回傳 { total, shares: {memberId: minor} }（基準幣別最小單位） */
+export function recordShares(rec, base) {
+  const total = recordBaseMinor(rec, base);
+  const parts = (rec.split && rec.split.parts) || {};
+  const mode = (rec.split && rec.split.mode) || 'equal';
+  const weights = {};
+  for (const [id, v] of Object.entries(parts)) weights[id] = mode === 'equal' ? (v ? 1 : 0) : Number(v) || 0;
+  return { total, shares: allocate(total, weights) };
+}
+
+/** 驗證紀錄，回傳錯誤訊息陣列 */
+export function validateRecord(rec) {
+  const errs = [];
+  if (!['expense', 'transfer', 'fund_in'].includes(rec.type)) errs.push('類型不正確');
+  if (!(Number(rec.amount) > 0)) errs.push('請輸入大於 0 的金額');
+  if (!CURRENCIES[rec.currency]) errs.push('不支援的幣別');
+  if (!rec.payerId) errs.push('請選擇付款人');
+  const parts = (rec.split && rec.split.parts) || {};
+  const ids = Object.keys(parts).filter((k) => Number(parts[k]) > 0 || parts[k] === true);
+  if (!ids.length) errs.push('至少選一位分攤成員');
+  if (rec.split && rec.split.mode === 'amount') {
+    const sum = ids.reduce((s, k) => s + Number(parts[k]), 0);
+    if (Math.abs(toMinor(sum, rec.currency) - toMinor(rec.amount, rec.currency)) > 0) errs.push('自訂金額加總需等於總金額');
+  }
+  if (rec.type === 'transfer' && ids.includes(rec.payerId)) errs.push('轉帳對象不能是自己');
+  return errs;
+}
+
+/** 計算每位成員（含公費）淨額：正數＝應收，負數＝應付 */
+export function computeBalances(records, base) {
+  const net = {};
+  const add = (id, v) => (net[id] = (net[id] || 0) + v);
+  for (const r of records) {
+    if (r.deleted) continue;
+    const { total, shares } = recordShares(r, base);
+    add(r.payerId, total);
+    for (const [id, s] of Object.entries(shares)) add(id, -s);
+  }
+  return net;
+}
+
+/** 公費併入保管人後的結算用淨額 */
+export function settlementBalances(records, base, custodianId) {
+  const net = computeBalances(records, base);
+  const fund = net[FUND_ID] || 0;
+  delete net[FUND_ID];
+  if (fund && custodianId) net[custodianId] = (net[custodianId] || 0) + fund;
+  return { net, fundUnassigned: fund && !custodianId ? fund : 0 };
+}
+
+/** 公費現金餘額（存入 − 公費支出） */
+export const fundCash = (records, base) => -(computeBalances(records, base)[FUND_ID] || 0);
+
+/** 統計：分類支出、個人已付/應分攤/公費存入 */
+export function stats(records, base) {
+  const byCategory = {};
+  const people = {};
+  const p = (id) => (people[id] = people[id] || { paid: 0, share: 0, fundIn: 0 });
+  let total = 0;
+  for (const r of records) {
+    if (r.deleted) continue;
+    const { total: t, shares } = recordShares(r, base);
+    if (r.type === 'expense') {
+      total += t;
+      byCategory[r.category || 'other'] = (byCategory[r.category || 'other'] || 0) + t;
+      p(r.payerId).paid += t;
+      for (const [id, s] of Object.entries(shares)) p(id).share += s;
+    } else if (r.type === 'fund_in') p(r.payerId).fundIn += t;
+  }
+  return { total, byCategory, people };
+}
