@@ -63,7 +63,7 @@ export function toast(msg, kind = '') {
 }
 
 /** 由下往上的抽屜；回傳 close() */
-export function sheet(title, body, { onClose, tall = false } = {}) {
+export function sheet(title, body, { onClose, tall = false, required = false } = {}) {
   const prevFocus = document.activeElement;
   const close = () => {
     wrap.classList.remove('open');
@@ -72,12 +72,12 @@ export function sheet(title, body, { onClose, tall = false } = {}) {
     prevFocus && prevFocus.focus && prevFocus.focus();
     onClose && onClose();
   };
-  const onKey = (e) => e.key === 'Escape' && close();
+  const onKey = (e) => !required && e.key === 'Escape' && close();
   const panel = h('div', { class: `sheet ${tall ? 'tall' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
     h('div', { class: 'sheet-grip' }),
-    h('header', { class: 'sheet-head' }, h('h2', {}, title), h('button', { class: 'icon-btn', 'aria-label': '關閉', onclick: close }, icon('x'))),
+    h('header', { class: 'sheet-head' }, h('h2', {}, title), required ? null : h('button', { class: 'icon-btn', 'aria-label': '關閉', onclick: close }, icon('x'))),
     h('div', { class: 'sheet-body' }, body));
-  const wrap = h('div', { class: 'sheet-wrap', onclick: (e) => e.target === wrap && close() }, panel);
+  const wrap = h('div', { class: 'sheet-wrap', onclick: (e) => !required && e.target === wrap && close() }, panel);
   document.body.append(wrap);
   document.addEventListener('keydown', onKey);
   requestAnimationFrame(() => { wrap.classList.add('open'); const f = panel.querySelector('input,select,textarea'); (f || panel.querySelector('button')).focus({ preventScroll: true }); });

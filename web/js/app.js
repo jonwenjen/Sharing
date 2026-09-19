@@ -3,7 +3,7 @@ import { line, initLine, ledgerUrl, sendToChat, pickAndShare, canSendToChat, inL
 import { store } from './store.js';
 import { h, mount, fitText, icon, avatar, toast, sheet, confirmBox, copyText, download } from './ui.js';
 import {
-  CURRENCIES, CATEGORIES, FUND_ID, categoryOf, formatMoney, formatMinor, fromMinor, decimalsOf, recordShares,
+  CURRENCIES, CATEGORIES, FUND_ID, categoryOf, formatMoney, formatMinor, fromMinor, decimalsOf, recordShares, amountSplit,
   settlementBalances, fundCash, stats, validateRecord,
 } from './money.js';
 import { minTransfers } from './settle.js';
@@ -151,7 +151,8 @@ async function openLedger(id, { keepScroll = false, join = null } = {}) {
   renderLedger();
   if (keepScroll) window.scrollTo(0, y);
   const adminOnly = S.viewer.isAdmin && !S.meId && !S.viewer.isCreator;
-  if (!S.meId && !S._askedIdentity && !adminOnly) { S._askedIdentity = true; identitySheet(); }
+  // 還不是這本帳本的成員（例如剛用邀請連結進來）：先選身分或加入，才能使用帳本
+  if (!S.meId && !adminOnly && !document.querySelector('.sheet-wrap.identity')) identitySheet({ required: true });
 }
 const reload = () => openLedger(S.ledger.id, { keepScroll: true });
 
@@ -187,7 +188,7 @@ function renderLedger() {
         onclick: () => { S.tab = k; renderLedger(); },
       }, label))),
       h('div', { class: 'tab-body', role: 'tabpanel' }, body)),
-    S.ledger.archived || S.tab !== 'list' ? null : h('button', { class: 'fab', onclick: () => editor(), 'aria-label': '記一筆' }, icon('plus', 22), h('span', {}, '記一筆')));
+    S.ledger.archived || S.tab !== 'list' ? null : h('button', { class: 'fab', onclick: () => (S.meId || (S.viewer && S.viewer.isAdmin) ? editor() : identitySheet({ required: true })), 'aria-label': '記一筆' }, icon('plus', 22), h('span', {}, '記一筆')));
   fitText(app, '.t-amount, .ticket-stub strong, .stat-total strong', 14);
 }
 
@@ -465,12 +466,15 @@ function memberSheet(m) {
     } }, icon('trash', 18), '移除成員') : h('button', { class: 'btn ghost block', onclick: async () => { await run(() => store.updateMember(m.id, { active: 1 }), '已恢復'); close(); reload(); } }, '恢復成員')));
 }
 
-function identitySheet() {
+function identitySheet({ required = false } = {}) {
   const dn = (line.profile.displayName || '').toLowerCase();
   const guess = (m) => dn && (m.name.toLowerCase().includes(dn) || dn.includes(m.name.toLowerCase()));
   const list = activeMembers();
-  const close = sheet('你是哪一位？', h('div', { class: 'form' },
-    h('p', { class: 'hint' }, '選好之後，你的 LINE 大頭貼會帶入，餘額也會以你的角度顯示。'),
+  const free = list.filter((m) => !m.lineUserId || m.lineUserId === line.profile.userId);
+  const close = sheet(required ? `歡迎加入「${S.ledger.name}」` : '你是哪一位？', h('div', { class: 'form' },
+    h('p', { class: 'hint' }, required
+      ? (free.length ? '你還不是這本帳本的成員。請從下面選出你是哪一位；名單上沒有你的話，按最下方加入。' : '名單上的成員都已經有人選了，請按下方加入成為新成員。')
+      : '選好之後，你的 LINE 大頭貼會帶入，餘額也會以你的角度顯示。'),
     h('ul', { class: 'member-list' }, list.map((m) => {
       const taken = m.lineUserId && m.lineUserId !== line.profile.userId;
       return h('li', {}, h('button', { class: `member ${guess(m) ? 'suggest' : ''}`, disabled: !!taken, onclick: async () => {
@@ -479,7 +483,10 @@ function identitySheet() {
     })),
     h('button', { class: 'btn ghost block', onclick: async () => {
       await run(() => store.addMember(S.ledger.id, { name: line.profile.displayName, claim: true }), '已把你加入帳本'); close(); reload();
-    } }, icon('plus', 18), `我不在名單上，加入「${line.profile.displayName}」`)));
+    } }, icon('plus', 18), `我不在名單上，加入「${line.profile.displayName}」`),
+    required ? h('button', { class: 'btn text block', onclick: () => { close(); home(); } }, '先回帳本列表') : null),
+  { required });
+  [...document.querySelectorAll('.sheet-wrap')].at(-1)?.classList.add('identity');
 }
 
 function settingsSheet() {
@@ -616,7 +623,7 @@ function editor(rec, presetType) {
         if (check.checked) parts[m.id] = mode === 'equal' ? true : mode === 'shares' ? 1 : ''; else delete parts[m.id];
         drawSplit();
       } });
-      const val = mode === 'equal' ? null : h('input', { class: 'input mini', inputmode: 'decimal', value: on ? parts[m.id] : '', disabled: !on, 'aria-label': `${m.name} ${mode === 'amount' ? '金額' : '份數'}`,
+      const val = mode === 'equal' ? null : h('input', { class: 'input mini', inputmode: 'decimal', value: on ? parts[m.id] : '', disabled: !on, placeholder: mode === 'amount' && on ? '平分' : '', 'aria-label': `${m.name} ${mode === 'amount' ? '金額' : '份數'}`,
         oninput: (e) => { parts[m.id] = e.target.value; drawSum(); updatePreview(); } });
       const pv = h('span', { class: 'split-pv', 'data-id': m.id }, preview[m.id] ? formatMinor(preview[m.id], b) : '');
       return h('label', { class: `split-row ${on ? '' : 'off'}` }, check, avatar(m, 26), h('span', { class: 'grow' }, m.name), val, pv);
@@ -624,10 +631,14 @@ function editor(rec, presetType) {
     const sum = h('p', { class: 'hint split-sum' });
     const drawSum = () => {
       if (mode !== 'amount') return (sum.textContent = '');
-      const s = Object.values(parts).reduce((a, v) => a + (Number(v) || 0), 0);
-      const left = (Number(r.amount) || 0) - s;
-      sum.textContent = Math.abs(left) < 1e-9 ? '金額剛好分配完畢' : left > 0 ? `還差 ${formatMoney(left, r.currency)}` : `超出 ${formatMoney(-left, r.currency)}`;
-      sum.classList.toggle('neg', Math.abs(left) >= 1e-9);
+      if (!(Number(r.amount) > 0)) { sum.textContent = '先輸入總金額；沒填金額的人會平分剩下的部分'; sum.classList.remove('neg'); return; }
+      const x = amountSplit(parts, r.amount, r.currency);
+      const n = x.blanks.length;
+      const each = n && x.remainder > 0 ? x.remainder / n : 0;
+      sum.textContent = x.error ? x.error
+        : n && x.remainder > 0 ? `剩下 ${formatMoney(x.remainder, r.currency)} 由 ${n} 位沒填金額的人平分，每人約 ${formatMoney(Math.round(each * 10 ** decimalsOf(r.currency)) / 10 ** decimalsOf(r.currency), r.currency)}`
+        : '金額剛好分配完畢';
+      sum.classList.toggle('neg', !!x.error);
     };
     const updatePreview = () => {
       const ok = Number(r.amount) > 0 && (r.currency === b || Number(r.rate) > 0);
