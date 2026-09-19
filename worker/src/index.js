@@ -358,6 +358,31 @@ async function decorate(env, rows) {
   }
   return rows;
 }
+// ---------- 個人匯款資訊（跨帳本共用）----------
+const PAY_KEYS = ['bank', 'bankCode', 'account', 'linePay', 'jko', 'note'];
+const cleanPay = (p) => Object.fromEntries(PAY_KEYS.map((k) => [k, String((p || {})[k] || '').trim().slice(0, 60)]));
+const hasPay = (p) => PAY_KEYS.some((k) => (p || {})[k]);
+async function getProfilePay(env, sub) {
+  const r = await env.DB.prepare('SELECT pay_info FROM user_profiles WHERE user_id = ?').bind(sub).first();
+  return r ? JSON.parse(r.pay_info || '{}') : {};
+}
+/** 存成個人預設，並同步到這個人在所有帳本綁定的成員 */
+async function savePayEverywhere(env, sub, pay) {
+  const json = JSON.stringify(cleanPay(pay));
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO user_profiles (user_id, pay_info, updated_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET pay_info = excluded.pay_info, updated_at = excluded.updated_at').bind(sub, json, now()),
+    env.DB.prepare('UPDATE members SET pay_info = ? WHERE line_user_id = ?').bind(json, sub),
+  ]);
+}
+/** 剛綁定的成員若還沒填匯款資訊，自動帶入個人預設 */
+async function fillPayFromProfile(env, memberId, sub) {
+  const pay = await getProfilePay(env, sub);
+  if (!hasPay(pay)) return;
+  const m = await env.DB.prepare('SELECT pay_info FROM members WHERE id = ?').bind(memberId).first();
+  if (m && hasPay(JSON.parse(m.pay_info || '{}'))) return;
+  await env.DB.prepare('UPDATE members SET pay_info = ? WHERE id = ?').bind(JSON.stringify(cleanPay(pay)), memberId).run();
+}
+
 export async function ensureAccess(env, l, user, join) {
   if (l.created_by === user.sub || isAdmin(env, user.sub)) return;
   const hit = await env.DB.prepare('SELECT 1 AS ok FROM members WHERE ledger_id = ?1 AND line_user_id = ?2 UNION SELECT 1 FROM ledger_access WHERE ledger_id = ?1 AND user_id = ?2 LIMIT 1').bind(l.id, user.sub).first();
@@ -383,7 +408,11 @@ async function api(req, env, url) {
   if (p === '/api/rates' && m === 'GET') return rates(env, url.searchParams.get('base') || 'TWD', url.searchParams.get('date'));
   const user = await authenticate(req, env);
 
-  if (p === '/api/me' && m === 'GET') return { userId: user.sub, name: user.name, isAdmin: isAdmin(env, user.sub) };
+  if (p === '/api/me' && m === 'GET') return { userId: user.sub, name: user.name, isAdmin: isAdmin(env, user.sub), payInfo: await getProfilePay(env, user.sub) };
+  if (p === '/api/me' && m === 'PATCH') {
+    if (body.payInfo) await savePayEverywhere(env, user.sub, body.payInfo);
+    return { userId: user.sub, name: user.name, isAdmin: isAdmin(env, user.sub), payInfo: await getProfilePay(env, user.sub) };
+  }
   if (p === '/api/me/ledgers' && m === 'GET') {
     const admin = isAdmin(env, user.sub);
     const { results } = await env.DB.prepare(admin ? `
@@ -418,6 +447,10 @@ async function api(req, env, url) {
       stmts.push(env.DB.prepare('INSERT INTO members (id,ledger_id,name,line_user_id,avatar,created_at) VALUES (?,?,?,?,?,?)').bind(id16(), lid, n, claim ? user.sub : null, claim ? user.picture : '', t + i));
     });
     await env.DB.batch(stmts);
+    if (body.claimFirst) {
+      const first = await env.DB.prepare('SELECT id FROM members WHERE ledger_id = ? AND line_user_id = ?').bind(lid, user.sub).first();
+      if (first) await fillPayFromProfile(env, first.id, user.sub);
+    }
     return ledgerOut(await getLedgerRow(env, lid));
   }
   if (seg[0] === 'ledgers' && seg[1]) {
@@ -473,6 +506,7 @@ async function api(req, env, url) {
       const mid = id16();
       if (body.claim) await env.DB.prepare('UPDATE members SET line_user_id = NULL, avatar = \'\' WHERE ledger_id = ? AND line_user_id = ?').bind(lid, user.sub).run();
       await env.DB.prepare('INSERT INTO members (id,ledger_id,name,line_user_id,avatar,created_at) VALUES (?,?,?,?,?,?)').bind(mid, lid, name, body.claim ? user.sub : null, body.claim ? user.picture : '', now()).run();
+      if (body.claim) await fillPayFromProfile(env, mid, user.sub);
       await touch(env, lid);
       return memberOut(await env.DB.prepare('SELECT * FROM members WHERE id = ?').bind(mid).first());
     }
@@ -499,9 +533,9 @@ async function api(req, env, url) {
       if (body.active != null) f.active = body.active ? 1 : 0;
       if (body.payInfo) {
         if (mem.line_user_id && mem.line_user_id !== user.sub) throw new HttpError(403, '只能修改自己的匯款資訊');
-        const pi = {};
-        for (const k of ['bank', 'bankCode', 'account', 'linePay', 'jko', 'note']) pi[k] = String(body.payInfo[k] || '').slice(0, 60);
-        f.pay_info = JSON.stringify(pi);
+        f.pay_info = JSON.stringify(cleanPay(body.payInfo));
+        // 本人修改時，預設同步成個人預設與其他帳本
+        if (mem.line_user_id === user.sub && body.syncAll !== false) await savePayEverywhere(env, user.sub, body.payInfo);
       }
       const cols = Object.keys(f);
       if (cols.length) await env.DB.prepare(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).bind(...cols.map((c) => f[c]), mem.id).run();
@@ -514,6 +548,7 @@ async function api(req, env, url) {
         env.DB.prepare('UPDATE members SET line_user_id = NULL, avatar = \'\' WHERE ledger_id = ? AND line_user_id = ?').bind(mem.ledger_id, user.sub),
         env.DB.prepare('UPDATE members SET line_user_id = ?, avatar = ? WHERE id = ?').bind(user.sub, user.picture || '', mem.id),
       ]);
+      await fillPayFromProfile(env, mem.id, user.sub);
       return memberOut(await env.DB.prepare('SELECT * FROM members WHERE id = ?').bind(mem.id).first());
     }
     if (seg.length === 2 && m === 'DELETE') {
@@ -568,6 +603,7 @@ export async function ensureSchema(env) {
     const { results } = await env.DB.prepare('PRAGMA table_info(ledgers)').all();
     const cols = new Set(results.map((c) => c.name));
     for (const [col, sql] of MIGRATIONS) if (!cols.has(col)) { await env.DB.prepare(sql).run(); console.log(`[schema] 已新增 ledgers.${col}`); }
+    await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_profiles (user_id TEXT PRIMARY KEY, pay_info TEXT DEFAULT '{}', updated_at INTEGER)").run();
     await env.DB.prepare('CREATE TABLE IF NOT EXISTS ledger_access (ledger_id TEXT NOT NULL, user_id TEXT NOT NULL, via TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (ledger_id, user_id))').run();
     schemaChecked = true;
   } catch (e) { console.error('[schema] 自動更新失敗', e); }
