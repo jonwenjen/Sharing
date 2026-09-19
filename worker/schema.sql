@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS ledgers (
   archived INTEGER NOT NULL DEFAULT 0,
   deleted INTEGER NOT NULL DEFAULT 0,
   fixed_rates TEXT DEFAULT '{}',
+  invite_code TEXT,
+  group_name TEXT,
+  creator_name TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -49,3 +52,12 @@ CREATE TABLE IF NOT EXISTS records (
   deleted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_records_ledger ON records(ledger_id, deleted);
+
+-- 可進入帳本的人（邀請連結或群組成員驗證後加入）
+CREATE TABLE IF NOT EXISTS ledger_access (
+  ledger_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  via TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (ledger_id, user_id)
+);
