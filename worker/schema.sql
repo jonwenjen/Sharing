@@ -61,3 +61,10 @@ CREATE TABLE IF NOT EXISTS ledger_access (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (ledger_id, user_id)
 );
+
+-- 每位 LINE 使用者的個人預設（例如匯款資訊，跨帳本共用）
+CREATE TABLE IF NOT EXISTS user_profiles (
+  user_id TEXT PRIMARY KEY,
+  pay_info TEXT DEFAULT '{}',
+  updated_at INTEGER
+);
