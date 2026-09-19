@@ -9,7 +9,7 @@ LIFF_ID = "2011659315-MlgnLpFZ"
 LINE_LOGIN_CHANNEL_ID = "2011659315"
 DEV_MODE = "0"
 # 管理員（可看到並進入所有帳本）的 LINE userId，多位用逗號分隔；在網頁首頁點右上角頭像可複製自己的 ID
-ADMIN_USER_IDS = ""
+ADMIN_USER_IDS = "U944c699399ccfbd4b2f36bc2f402100e"
 
 # 機密請用 `npx wrangler secret put` 設定：
 #   LINE_CHANNEL_SECRET, LINE_CHANNEL_ACCESS_TOKEN
