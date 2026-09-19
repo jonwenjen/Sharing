@@ -286,3 +286,36 @@ test('管理員：看得到並能進入所有帳本，列表有標示', async ()
   assert.equal(g.data.viewer.isAdmin, true);
   assert.equal((await call('boss', 'GET', '/api/me/ledgers')).data.find((l) => l.id === L).viaAdmin, true, '管理員檢視不會變成一般存取');
 });
+
+test('匯款資訊記在個人：同步到所有帳本、新帳本自動帶入', async () => {
+  // zhe 在東京帳本改自己的匯款資訊 → 成為個人預設
+  const g = await call('zhe', 'GET', `/api/ledgers/${L}`);
+  const zheM = g.data.members.find((m) => m.lineUserId === 'zhe');
+  await call('zhe', 'PATCH', `/api/members/${zheM.id}`, { payInfo: { bank: '玉山', bankCode: '808', account: '1111-2222' } });
+  assert.equal((await call('zhe', 'GET', '/api/me')).data.payInfo.account, '1111-2222');
+  // 加入另一本帳本並認領 → 自動帶入
+  const nl = await call('robin', 'POST', '/api/ledgers', { name: '記憶測試', members: ['Robin', '阿哲'], claimFirst: true });
+  await call('zhe', 'GET', `/api/ledgers/${nl.data.id}?join=${nl.data.inviteCode}`);
+  const members = (await call('zhe', 'GET', `/api/ledgers/${nl.data.id}`)).data.members;
+  const target = members.find((m) => m.name === '阿哲');
+  const claimed = await call('zhe', 'POST', `/api/members/${target.id}/claim`);
+  assert.equal(claimed.data.payInfo.bank, '玉山');
+  // 用「我不在名單上」加入也會帶入
+  const nl2 = await call('robin', 'POST', '/api/ledgers', { name: '記憶測試2', members: ['Robin'], claimFirst: true });
+  await call('zhe', 'GET', `/api/ledgers/${nl2.data.id}?join=${nl2.data.inviteCode}`);
+  const self = await call('zhe', 'POST', `/api/ledgers/${nl2.data.id}/members`, { name: 'Zhe', claim: true });
+  assert.equal(self.data.payInfo.account, '1111-2222');
+  // 從帳號頁更新 → 所有帳本同步
+  await call('zhe', 'PATCH', '/api/me', { payInfo: { linePay: '0912-000-000' } });
+  for (const lid of [L, nl.data.id, nl2.data.id]) {
+    const mm = (await call('zhe', 'GET', `/api/ledgers/${lid}`)).data.members.find((m) => m.lineUserId === 'zhe');
+    assert.equal(mm.payInfo.linePay, '0912-000-000', lid);
+  }
+  // 只改這本（syncAll: false）不影響其他帳本
+  await call('zhe', 'PATCH', `/api/members/${zheM.id}`, { payInfo: { account: '只給東京' }, syncAll: false });
+  assert.equal((await call('zhe', 'GET', '/api/me')).data.payInfo.linePay, '0912-000-000');
+  const other = (await call('zhe', 'GET', `/api/ledgers/${nl.data.id}`)).data.members.find((m) => m.lineUserId === 'zhe');
+  assert.equal(other.payInfo.linePay, '0912-000-000');
+  // 別人不能改我的個人資料
+  assert.equal((await call('robin', 'PATCH', `/api/members/${zheM.id}`, { payInfo: { account: 'x' } })).status, 403);
+});
