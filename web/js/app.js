@@ -323,9 +323,9 @@ function settleTab(net, fundUnassigned) {
       h('button', { class: 'btn ghost sm', onclick: () => markPaid(t) }, icon('check', 16), '記為已付款'));
   })));
   out.push(h('button', { class: 'btn ghost block', onclick: async () => {
-    const msg = { type: 'text', text: settleText(S.ledger, S.members, transfers, show) };
-    if (await shareToGroup([msg])) return;
-    copyText(msg.text, '已複製結算結果，可貼到 LINE');
+    const text = settleText(S.ledger, S.members, transfers, show);
+    if (await shareToGroup({ kind: 'settle', currency: dc }, { fallbackText: text })) return;
+    copyText(text, '已複製結算結果，可貼到 LINE');
   } }, icon('share', 18), '分享結算結果'));
   return out;
 }
@@ -782,21 +782,23 @@ function shareToggle() {
   return { el: h('label', { class: 'row between share-toggle' }, h('span', {}, '分享到 LINE 群組', h('small', { class: 'hint block' }, hint)), cb), on: () => cb.checked };
 }
 async function shareRecord(action, rec) {
-  await shareToGroup([recordFlex(action, rec, S.ledger, S.members, ledgerUrl(S.ledger.id))], { quiet: true });
+  if (!rec || !rec.id) return;
+  await shareToGroup({ kind: 'record', action, recordId: rec.id }, { quiet: true });
 }
 /** 只傳到帳本連結的群組；沒有連結就不傳 */
-async function shareToGroup(messages, { quiet = false } = {}) {
+// 訊息內容由後端依紀錄產生，前端只告訴它「哪一筆、做了什麼」
+async function shareToGroup(payload, { quiet = false, fallbackText = '' } = {}) {
   if (line.demo) { toast('示範模式：已略過分享到 LINE'); return true; }
   if (!S.ledger.groupId) {
     if (!quiet) {
-      const t = messages.find((m) => m.type === 'text');
-      if (t) { copyText(t.text, '這本帳本沒有連結 LINE 群組，已複製文字'); return true; }
+      if (fallbackText) { copyText(fallbackText, '這本帳本沒有連結 LINE 群組，已複製文字'); return true; }
       toast('這本帳本沒有連結 LINE 群組', 'err');
     }
     return false;
   }
+  if (!S.meId && !(S.viewer && S.viewer.isCreator)) { if (!quiet) toast('請先選擇你的身分才能傳到群組', 'err'); return false; }
   try {
-    const r = await store.notifyGroup(S.ledger.id, messages);
+    const r = await store.notifyGroup(S.ledger.id, payload);
     if (r && r.ok === false) throw new Error('LINE 拒絕了這則訊息');
     toast(`已傳到「${S.ledger.groupName || 'LINE 群組'}」`);
     return true;

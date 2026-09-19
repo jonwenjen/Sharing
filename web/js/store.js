@@ -40,7 +40,7 @@ const remote = {
   updateRecord: (rid, p) => call('PATCH', `/api/records/${rid}`, p),
   deleteRecord: (rid) => call('DELETE', `/api/records/${rid}`),
   rates: (base, date) => call('GET', `/api/rates?base=${base}${date ? `&date=${date}` : ''}`),
-  notifyGroup: (lid, messages) => call('POST', `/api/ledgers/${lid}/notify`, { messages }),
+  notifyGroup: (lid, payload) => call('POST', `/api/ledgers/${lid}/notify`, payload),
 };
 
 // ---------- 示範模式 ----------

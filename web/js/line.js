@@ -5,9 +5,13 @@ const state = { ready: false, demo: true, profile: null, idToken: null, context:
 export const line = state;
 
 export async function initLine() {
-  const qs = new URLSearchParams(location.search);
-  const wantDemo = qs.has('demo') || !CONFIG.LIFF_ID || !CONFIG.API_BASE || !window.liff;
-  if (wantDemo) {
+  // 只有「沒有填正式設定」時才會進示範模式；正式設定下絕不自動切示範，避免資料只存在手機裡
+  const configured = !!(CONFIG.LIFF_ID && CONFIG.API_BASE);
+  if (configured && !window.liff) {
+    for (let i = 0; i < 20 && !window.liff; i++) await new Promise((r) => setTimeout(r, 250));
+    if (!window.liff) throw new Error('LINE 登入元件載入失敗，請確認網路後按「重新載入」。');
+  }
+  if (!configured) {
     state.demo = true;
     state.profile = { userId: 'demo-me', displayName: '我（示範）', pictureUrl: '' };
     state.ready = true;
