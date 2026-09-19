@@ -49,7 +49,8 @@ with sync_playwright() as p:
     # 用邀請連結加入
     eve.goto(f'http://127.0.0.1:8766/index.html?l={lid}&join={code}')
     expect(eve.locator('.top-title')).to_have_text('志賀高原')
-    expect(eve.get_by_role('dialog', name='你是哪一位？')).to_be_visible()
+    expect(eve.get_by_role('dialog', name='歡迎加入「志賀高原」')).to_be_visible()
+    eve.screenshot(path=f'{SHOTS}/25-invite-identity.png')
     assert 'join=' not in eve.url, '加入後網址要移除邀請碼'
     eve.goto(f'http://127.0.0.1:8766/index.html')
     expect(eve.get_by_text('志賀高原')).to_be_visible()
