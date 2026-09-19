@@ -1,8 +1,8 @@
 // Sharing API — Cloudflare Worker + D1
 // 路由：/api/*（前端 LIFF 呼叫，需 LINE ID Token）與 /webhook（LINE Messaging API）
-import { settlementBalances, CURRENCIES, validateRecord, formatMinor, guessCategory, categoryOf } from '../../web/js/money.js';
+import { settlementBalances, CURRENCIES, validateRecord, formatMinor, formatMoney, fromMinor, decimalsOf, guessCategory, categoryOf } from '../../web/js/money.js';
 import { parseQuickEntry, QUICK_HELP } from '../../web/js/parse.js';
-import { recordFlex } from '../../web/js/messages.js';
+import { recordFlex, settleText } from '../../web/js/messages.js';
 import { minTransfers } from '../../web/js/settle.js';
 
 const id16 = () => crypto.randomUUID().replace(/-/g, '').slice(0, 16);
@@ -304,6 +304,32 @@ export async function undoEntry(env, ev) {
   return replyText(env, ev, `已取消「${rec.title}」。`);
 }
 
+/** 依紀錄或結算結果產生要推播的訊息（不接受前端傳來的任意內容） */
+async function buildNotify(env, lid, body) {
+  const { ledger, members, records } = await loadLedger(env, lid);
+  const url = liffUrl(env, `?l=${lid}`);
+  if (body.kind === 'record') {
+    if (!['create', 'update', 'delete'].includes(body.action)) throw new HttpError(400, '不支援的通知類型');
+    const row = await env.DB.prepare('SELECT * FROM records WHERE id = ? AND ledger_id = ?').bind(String(body.recordId || ''), lid).first();
+    if (!row) throw new HttpError(404, '找不到這筆紀錄');
+    if (Boolean(row.deleted) !== (body.action === 'delete')) throw new HttpError(400, '紀錄狀態與通知不符');
+    return [recordFlex(body.action, recordOut(row), ledger, members, url)];
+  }
+  if (body.kind === 'settle') {
+    const base = ledger.baseCurrency;
+    const { net } = settlementBalances(records, base, ledger.fundEnabled ? ledger.fundCustodian : null);
+    const tx = minTransfers(net);
+    let fmt = (v) => formatMinor(v, base);
+    const cur = body.currency;
+    if (cur && cur !== base && CURRENCIES[cur]) {
+      const r = (await rates(env, base).catch(() => ({ rates: {} }))).rates[cur];
+      if (r) fmt = (v) => { const d = decimalsOf(cur); return formatMoney(Math.round((fromMinor(v, base) / r) * 10 ** d) / 10 ** d, cur); };
+    }
+    return [{ type: 'text', text: settleText(ledger, members, tx, fmt) }];
+  }
+  throw new HttpError(400, '不支援的通知類型');
+}
+
 export async function settleSummary(env, ledgerId) {
   const { ledger, members, records } = await loadLedger(env, ledgerId);
   const { net } = settlementBalances(records, ledger.baseCurrency, ledger.fundEnabled ? ledger.fundCustodian : null);
@@ -318,6 +344,7 @@ export async function settleSummary(env, ledgerId) {
 const newInviteCode = () => crypto.randomUUID().replace(/-/g, '').slice(0, 20);
 const safeEq = (a, b) => { a = String(a || ''); b = String(b || ''); let d = a.length ^ b.length; for (let i = 0; i < Math.min(a.length, b.length); i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0 && a.length > 0; };
 const gmCache = new Map();
+export const _resetGroupCache = () => gmCache.clear();
 export async function isGroupMember(env, gid, sub) {
   if (!gid || !sub || !env.LINE_CHANNEL_ACCESS_TOKEN) return false;
   const k = `${gid}|${sub}`;
@@ -388,7 +415,8 @@ export async function ensureAccess(env, l, user, join) {
   const hit = await env.DB.prepare('SELECT 1 AS ok FROM members WHERE ledger_id = ?1 AND line_user_id = ?2 UNION SELECT 1 FROM ledger_access WHERE ledger_id = ?1 AND user_id = ?2 LIMIT 1').bind(l.id, user.sub).first();
   if (hit) return;
   if (join && safeEq(join, l.invite_code)) return grant(env, l.id, user.sub, 'invite');
-  if (l.group_id && (await isGroupMember(env, l.group_id, user.sub))) return grant(env, l.id, user.sub, 'group');
+  // 群組成員身分每次都向 LINE 確認（有短暫快取），不永久記錄，退出群組後就無法再進入
+  if (l.group_id && (await isGroupMember(env, l.group_id, user.sub))) return;
   throw new HttpError(403, join ? '邀請連結已失效，請向帳本成員索取新的連結' : '你沒有這本帳本的權限，請向帳本成員索取邀請連結', 'NO_ACCESS');
 }
 async function withInvite(env, l) {
@@ -523,9 +551,12 @@ async function api(req, env, url) {
       return insertRecord(env, lid, r, user.sub);
     }
     if (seg[2] === 'notify' && m === 'POST') {
+      // 只有已綁定的成員（或建立者）能讓機器人傳訊；訊息內容一律由後端依資料產生，不接受任意文字
       const l = await getLedgerRow(env, lid);
       if (!l.group_id) throw new HttpError(400, '這本帳本沒有連結 LINE 群組');
-      const messages = (body.messages || []).slice(0, 2);
+      const bound = l.created_by === user.sub || (await env.DB.prepare('SELECT 1 FROM members WHERE ledger_id = ? AND line_user_id = ? AND active = 1').bind(lid, user.sub).first());
+      if (!bound) throw new HttpError(403, '只有帳本成員可以傳訊息到群組，請先選擇你的身分');
+      const messages = await buildNotify(env, lid, body);
       const ok = await lineApi(env, 'push', { to: l.group_id, messages });
       return { ok };
     }
@@ -611,6 +642,8 @@ export async function ensureSchema(env) {
     const cols = new Set(results.map((c) => c.name));
     for (const [col, sql] of MIGRATIONS) if (!cols.has(col)) { await env.DB.prepare(sql).run(); console.log(`[schema] 已新增 ledgers.${col}`); }
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_profiles (user_id TEXT PRIMARY KEY, pay_info TEXT DEFAULT '{}', updated_at INTEGER)").run();
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS ledger_access (ledger_id TEXT NOT NULL, user_id TEXT NOT NULL, via TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (ledger_id, user_id))').run();
+    await env.DB.prepare("DELETE FROM ledger_access WHERE via = 'group'").run(); // 舊版會永久記錄群組身分，清掉
     await env.DB.prepare('CREATE TABLE IF NOT EXISTS ledger_access (ledger_id TEXT NOT NULL, user_id TEXT NOT NULL, via TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (ledger_id, user_id))').run();
     schemaChecked = true;
   } catch (e) { console.error('[schema] 自動更新失敗', e); }
