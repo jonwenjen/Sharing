@@ -1,5 +1,5 @@
 // Sharing 主程式：帳本列表、帳本（明細／結算／統計／成員）、記帳編輯器
-import { line, initLine, ledgerUrl, sendToChat, pickAndShare, canSendToChat, inLineApp, openExternal, webUrl } from './line.js';
+import { line, initLine, ledgerUrl, pickAndShare, inLineApp, openExternal, webUrl } from './line.js';
 import { store } from './store.js';
 import { h, mount, fitText, icon, avatar, toast, sheet, confirmBox, copyText, download } from './ui.js';
 import {
@@ -58,7 +58,8 @@ async function home() {
   mount(app,
     h('header', { class: 'top home-top' },
       h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, 'S'), 'Sharing'),
-      h('button', { class: 'me-chip', 'aria-label': '我的帳號', onclick: accountSheet }, S.me && S.me.isAdmin ? h('em', { class: 'tag admin' }, '管理員') : null, avatar({ name: line.profile.displayName, avatar: line.profile.pictureUrl }, 30))),
+      h('div', { class: 'top-actions' }, h('button', { class: 'icon-btn', 'aria-label': '使用說明', onclick: helpSheet }, icon('help')),
+      h('button', { class: 'me-chip', 'aria-label': '我的帳號', onclick: accountSheet }, S.me && S.me.isAdmin ? h('em', { class: 'tag admin' }, '管理員') : null, avatar({ name: line.profile.displayName, avatar: line.profile.pictureUrl }, 30)))),
     line.demo ? h('p', { class: 'demo-note' }, '示範模式：資料只存在這支手機的瀏覽器。', h('button', { class: 'link', onclick: async () => { await store.reset(); home(); } }, '重設示範資料')) : null,
     h('main', { class: 'home' },
       h('h1', { class: 'home-title' }, '帳本'),
@@ -100,6 +101,56 @@ async function accountSheet() {
     } }, '儲存匯款資訊'),
     field('LINE 使用者 ID', h('div', { class: 'row gap' }, h('code', { class: 'uid grow' }, me.userId), h('button', { class: 'btn ghost sm', onclick: () => copyText(me.userId, '已複製 ID') }, icon('copy', 16), '複製')),
       '要設為管理員，請把這個 ID 填入後端 wrangler.toml 的 ADMIN_USER_IDS。')), { tall: true });
+}
+
+// ============ 使用說明 ============
+function helpSheet() {
+  const sec = (title, items, open = false) => h('details', { open },
+    h('summary', {}, title),
+    h('ul', {}, items.map((x) => h('li', { html: x }))));
+  sheet('使用說明', h('div', { class: 'help' },
+    sec('在 LINE 群組裡', [
+      '把<b>記帳機器人</b>拉進群組，按它貼出的「開始記帳」建立帳本，這本帳本就會連結這個群組。',
+      '輸入 <code>記帳</code>：叫出開啟帳本的按鈕。',
+      '輸入 <code>結算</code>：直接回覆「誰要轉給誰多少」，而且轉帳筆數最少。',
+      '輸入 <code>說明</code>：顯示快速記帳格式。',
+      '記帳、修改、刪除的通知<b>只會</b>由機器人傳到帳本連結的那個群組。',
+    ], true),
+    sec('在 LINE 直接打字記帳', [
+      '<code>+1200 晚餐</code>：全員平分，用帳本的幣別。',
+      '<code>+3000 JPY 拉麵 @小安 @我</code>：指定幣別與分攤的人；<code>@我</code> 代表自己，也可以用 LINE 的「提及」。',
+      '幣別可寫 <code>JPY</code>、<code>円</code>、<code>日幣</code>、<code>¥</code>、<code>美金</code>、<code>韓元</code>…，分類會依項目名稱自動判斷。',
+      '付款人＝發訊息的人。要先在網頁上選好自己的身分才能用。',
+      '機器人回覆的卡片上可以按「修改」或「取消這筆」（只有記帳本人能取消）。',
+    ]),
+    sec('第一次加入帳本', [
+      '朋友點你分享的<b>邀請連結</b>後，會先看到「歡迎加入」，從名單選自己，或按最下方「我不在名單上，加入」。',
+      '只有帳本成員、連結群組的成員、拿到邀請連結的人才能進入帳本。連結外洩時可在設定裡重設。',
+    ]),
+    sec('記一筆', [
+      '右下角「記一筆」：輸入金額、選幣別，外幣會依<b>消費日期</b>自動帶入當天匯率（可手動改，或在設定裡用固定匯率）。',
+      '項目名稱下方可快速選分類：早午餐、晚餐、餐飲、飲料、甜點、交通、住宿…。',
+      '「誰先付的」選付款人；有開公費時也可以選「公費」。',
+      '分攤方式：<b>平分</b>、<b>自訂金額</b>、<b>依份數</b>。取消勾選的人不分攤。',
+      '自訂金額填的總和不夠時，可選「<b>所有人平均</b>」（預設，所有勾選的人平均分攤差額）或「<b>沒填的人平均</b>」（只由勾選但沒填金額的人平分）。',
+      '最下方的開關決定這筆要不要通知 LINE 群組。',
+    ]),
+    sec('結算、統計、匯出', [
+      '<b>結算</b>：列出最少的轉帳方式，收款人的匯款資訊可一鍵複製；轉完帳按「記為已付款」。右上角可切換顯示幣別（依今日匯率換算，僅供參考）。',
+      '<b>統計</b>：每日花費、分類占比、前 5 大支出、每人 × 分類；可切換「全體／我的」。',
+      '<b>匯出</b>：CSV 或「複製表格」直接貼到試算表。在 LINE 裡無法下載時，按「用瀏覽器開啟並下載」。',
+    ]),
+    sec('成員、公費、匯款資訊', [
+      '<b>成員</b>分頁：分享邀請連結、新增或移除成員（有帳目的成員會改為停用）。',
+      '<b>匯款資訊</b>：首頁右上角頭像填一次，所有帳本自動同步，新帳本也會自動帶入。',
+      '<b>公費</b>：開啟後指定保管人，用「存入公費」記錄大家交的錢，花費時付款人選「公費」。',
+    ]),
+    sec('帳本設定（右上角齒輪）', [
+      '修改名稱、固定匯率、預設是否分享到 LINE。',
+      '「連結到目前的 LINE 群組」：從群組裡的機器人按鈕開啟後，可把帳本連結到那個群組。',
+      '重設邀請連結、封存帳本（不能再新增）、刪除帳本（只有建立者可以）。',
+    ]),
+  ), { tall: true });
 }
 
 function noAccess(message) {
@@ -178,7 +229,9 @@ function renderLedger() {
     h('header', { class: 'top' },
       h('button', { class: 'icon-btn', 'aria-label': '回帳本列表', onclick: home }, icon('back')),
       h('h1', { class: 'top-title' }, S.ledger.name),
-      h('button', { class: 'icon-btn', 'aria-label': '帳本設定', onclick: settingsSheet }, icon('gear'))),
+      h('div', { class: 'top-actions' },
+        h('button', { class: 'icon-btn', 'aria-label': '使用說明', onclick: helpSheet }, icon('help')),
+        h('button', { class: 'icon-btn', 'aria-label': '帳本設定', onclick: settingsSheet }, icon('gear')))),
     h('main', { class: 'ledger' },
       S.viewer && S.viewer.isAdmin && !S.meId ? h('p', { class: 'admin-banner' }, '🔑 管理員檢視：你不是這本帳本的成員') : null,
       h('p', { class: 'ledger-meta' }, S.ledger.groupId ? `👥 ${S.ledger.groupName || 'LINE 群組'}` : '未連結群組', `　建立者 ${S.ledger.creatorName || '—'}`),
@@ -271,8 +324,7 @@ function settleTab(net, fundUnassigned) {
   })));
   out.push(h('button', { class: 'btn ghost block', onclick: async () => {
     const msg = { type: 'text', text: settleText(S.ledger, S.members, transfers, show) };
-    if (await sendToChat([msg])) return toast('已分享到 LINE');
-    if (await pickAndShare([msg])) return toast('已分享到 LINE');
+    if (await shareToGroup([msg])) return;
     copyText(msg.text, '已複製結算結果，可貼到 LINE');
   } }, icon('share', 18), '分享結算結果'));
   return out;
@@ -417,7 +469,6 @@ function membersTab() {
       h('div', { class: 'row gap' },
         h('button', { class: 'btn primary grow', onclick: async () => {
           if (await pickAndShare([inviteFlex(S.ledger, link)])) toast('已送出邀請');
-          else if (await sendToChat([inviteFlex(S.ledger, link)])) toast('已送出邀請');
           else copyText(link, '已複製邀請連結');
         } }, icon('share', 18), '分享到 LINE'),
         h('button', { class: 'btn ghost', onclick: () => copyText(link, '已複製邀請連結') }, icon('copy', 18), '複製連結'))),
@@ -515,6 +566,12 @@ function settingsSheet() {
   const close = sheet('帳本設定', h('div', { class: 'form' },
     field('帳本名稱', name),
     field('結算幣別', cur, S.records.length ? '已有紀錄，無法更改結算幣別。' : null),
+    h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'LINE 群組'),
+      h('p', { class: 'hint' }, S.ledger.groupId ? `已連結「${S.ledger.groupName || 'LINE 群組'}」。記帳訊息只會傳到這個群組。` : '尚未連結。要連結的話，請在那個群組輸入「記帳」，從機器人的按鈕開啟後回到這裡。'),
+      S.groupId && S.groupId !== S.ledger.groupId ? h('button', { class: 'btn ghost block', onclick: async () => {
+        if (!(await confirmBox(S.ledger.groupId ? '改連結到目前開啟的 LINE 群組？之後的記帳訊息會改傳到這個群組。' : '連結到目前開啟的 LINE 群組？之後的記帳訊息會傳到這個群組。', '連結'))) return;
+        await run(() => store.updateLedger(S.ledger.id, { groupId: S.groupId }), '已連結 LINE 群組'); close(); reload();
+      } }, '連結到目前的 LINE 群組') : null),
     field('固定匯率（選用）', frBox, '例如出發前換日圓的匯率。設定後記這個幣別會自動帶入，已記的帳不受影響。'),
     h('label', { class: 'row between' }, h('span', {}, '記帳後預設分享到 LINE'), share),
     h('button', { class: 'btn primary block', onclick: async () => {
@@ -610,10 +667,15 @@ function editor(rec, presetType) {
     if (r.type !== 'expense') return splitBox.replaceChildren();
     const parts = r.split.parts;
     const mode = r.split.mode;
+    const fill = r.split.fill || 'blank';
+    const fillSeg = mode !== 'amount' ? null : h('div', { class: 'fill-opt' },
+      h('span', { class: 'hint' }, '填的金額不夠時'),
+      h('div', { class: 'seg sm' }, [['all', '所有人平均'], ['blank', '沒填的人平均']].map(([k, label]) => h('button', { class: fill === k ? 'on' : '', 'aria-pressed': String(fill === k), onclick: () => { r.split.fill = k; drawSplit(); } }, label))));
     const modeSeg = h('div', { class: 'seg sm' }, [['equal', '平分'], ['amount', '自訂金額'], ['shares', '依份數']].map(([k, label]) => h('button', { class: mode === k ? 'on' : '', onclick: () => {
       const on = Object.keys(parts).filter((id) => parts[id]);
       r.split.mode = k;
       r.split.parts = Object.fromEntries(on.map((id) => [id, k === 'equal' ? true : k === 'shares' ? 1 : '']));
+      if (k === 'amount') r.split.fill = 'all'; else delete r.split.fill;
       drawSplit();
     } }, label)));
     const preview = Number(r.amount) > 0 && (r.currency === b || Number(r.rate) > 0) ? recordShares(r, b).shares : {};
@@ -623,7 +685,7 @@ function editor(rec, presetType) {
         if (check.checked) parts[m.id] = mode === 'equal' ? true : mode === 'shares' ? 1 : ''; else delete parts[m.id];
         drawSplit();
       } });
-      const val = mode === 'equal' ? null : h('input', { class: 'input mini', inputmode: 'decimal', value: on ? parts[m.id] : '', disabled: !on, placeholder: mode === 'amount' && on ? '平分' : '', 'aria-label': `${m.name} ${mode === 'amount' ? '金額' : '份數'}`,
+      const val = mode === 'equal' ? null : h('input', { class: 'input mini', inputmode: 'decimal', value: on ? parts[m.id] : '', disabled: !on, placeholder: mode === 'amount' && on ? (fill === 'all' ? '0' : '平分') : '', 'aria-label': `${m.name} ${mode === 'amount' ? '金額' : '份數'}`,
         oninput: (e) => { parts[m.id] = e.target.value; drawSum(); updatePreview(); } });
       const pv = h('span', { class: 'split-pv', 'data-id': m.id }, preview[m.id] ? formatMinor(preview[m.id], b) : '');
       return h('label', { class: `split-row ${on ? '' : 'off'}` }, check, avatar(m, 26), h('span', { class: 'grow' }, m.name), val, pv);
@@ -631,12 +693,15 @@ function editor(rec, presetType) {
     const sum = h('p', { class: 'hint split-sum' });
     const drawSum = () => {
       if (mode !== 'amount') return (sum.textContent = '');
-      if (!(Number(r.amount) > 0)) { sum.textContent = '先輸入總金額；沒填金額的人會平分剩下的部分'; sum.classList.remove('neg'); return; }
-      const x = amountSplit(parts, r.amount, r.currency);
-      const n = x.blanks.length;
+      if (!(Number(r.amount) > 0)) { sum.textContent = fill === 'all' ? '先輸入總金額；不足的金額會由所有勾選的人平均分攤' : '先輸入總金額；沒填金額的人會平分剩下的部分'; sum.classList.remove('neg'); return; }
+      const x = amountSplit(parts, r.amount, r.currency, fill);
+      const n = x.targets.length;
       const each = n && x.remainder > 0 ? x.remainder / n : 0;
+      const eachTxt = formatMoney(Math.round(each * 10 ** decimalsOf(r.currency)) / 10 ** decimalsOf(r.currency), r.currency);
       sum.textContent = x.error ? x.error
-        : n && x.remainder > 0 ? `剩下 ${formatMoney(x.remainder, r.currency)} 由 ${n} 位沒填金額的人平分，每人約 ${formatMoney(Math.round(each * 10 ** decimalsOf(r.currency)) / 10 ** decimalsOf(r.currency), r.currency)}`
+        : n && x.remainder > 0 ? (fill === 'all'
+          ? `不足 ${formatMoney(x.remainder, r.currency)} 由勾選的 ${n} 人平均分攤，每人再加約 ${eachTxt}`
+          : `剩下 ${formatMoney(x.remainder, r.currency)} 由 ${n} 位沒填金額的人平分，每人約 ${eachTxt}`)
         : '金額剛好分配完畢';
       sum.classList.toggle('neg', !!x.error);
     };
@@ -647,10 +712,10 @@ function editor(rec, presetType) {
     };
     drawSum();
     const allOn = members.every((m) => (mode === 'equal' ? parts[m.id] : m.id in parts));
-    splitBox.replaceChildren(h('div', { class: 'row between' }, h('span', { class: 'field-label' }, '誰要分攤'), h('button', { class: 'link', onclick: () => {
+    mount(splitBox, h('div', { class: 'row between' }, h('span', { class: 'field-label' }, '誰要分攤'), h('button', { class: 'link', onclick: () => {
       members.forEach((m) => (allOn ? delete parts[m.id] : (parts[m.id] = parts[m.id] ?? (mode === 'equal' ? true : mode === 'shares' ? 1 : ''))));
       drawSplit();
-    } }, allOn ? '全部取消' : '全選')), modeSeg, h('div', { class: 'split-list' }, rows), sum);
+    } }, allOn ? '全部取消' : '全選')), modeSeg, fillSeg, h('div', { class: 'split-list' }, rows), sum);
   }
 
   function draw() {
@@ -660,7 +725,7 @@ function editor(rec, presetType) {
       typeSeg,
       h('div', { class: 'amount-row' }, cur, amount),
       rateBox,
-      r.type === 'expense' ? [field('項目', title), h('div', { class: 'chips scroll cats' }, CATEGORIES.map((c) => h('button', { class: `chip ${r.category === c.id ? 'on' : ''}`, onclick: () => { r.category = c.id; draw(); } }, `${c.icon} ${c.name}`)))] : null,
+      r.type === 'expense' ? [field('項目', title), h('div', { class: 'chips cats' }, CATEGORIES.map((c) => h('button', { class: `chip ${r.category === c.id ? 'on' : ''}`, onclick: () => { r.category = c.id; draw(); } }, `${c.icon} ${c.name}`)))] : null,
       h('div', {}, h('span', { class: 'field-label' }, r.type === 'expense' ? '誰先付的' : r.type === 'transfer' ? '誰轉出' : '誰存入'),
         personChips(r.payerId, (id) => { r.payerId = id; if (r.type === 'transfer' && r.split.parts[id] !== undefined) r.split.parts = {}; draw(); }, { withFund: r.type === 'expense' && !!S.ledger.fundEnabled })),
       r.type === 'transfer' ? h('div', {}, h('span', { class: 'field-label' }, '轉給誰'), personChips(toId, (id) => { r.split.parts = { [id]: r.amount || 0 }; draw(); }, { exclude: r.payerId })) : null,
@@ -706,17 +771,36 @@ function field(label, control, hint) {
 function currencySelect(value, compact) {
   return h('select', { class: `input cur ${compact ? 'compact' : ''}`, 'aria-label': '幣別' }, Object.entries(CURRENCIES).map(([k, c]) => h('option', { value: k, selected: k === value }, compact ? `${k}` : `${k}　${c.name}`)));
 }
+// 分享只走「帳本連結的 LINE 群組」：一律由記帳機器人推播到 ledger.groupId，
+// 不再用 liff.sendMessages（它會傳到「目前開啟的聊天室」，可能是別的群組）。
 function shareToggle() {
-  const cb = h('input', { type: 'checkbox', class: 'switch', checked: S.ledger ? !!S.ledger.shareDefault : true });
-  const hint = line.demo ? '示範模式不會真的傳到 LINE' : canSendToChat() ? '會以你的名義傳到這個聊天室' : S.ledger && S.ledger.groupId ? '由記帳機器人通知群組' : '需從 LINE 聊天室開啟才能分享';
+  const linked = !!(S.ledger && S.ledger.groupId);
+  const cb = h('input', { type: 'checkbox', class: 'switch', checked: linked && !!S.ledger.shareDefault, disabled: !linked && !line.demo });
+  const hint = line.demo ? '示範模式不會真的傳到 LINE'
+    : linked ? `由記帳機器人傳到「${S.ledger.groupName || '連結的 LINE 群組'}」`
+    : '這本帳本沒有連結 LINE 群組，不會分享（可在帳本設定連結）';
   return { el: h('label', { class: 'row between share-toggle' }, h('span', {}, '分享到 LINE 群組', h('small', { class: 'hint block' }, hint)), cb), on: () => cb.checked };
 }
 async function shareRecord(action, rec) {
-  const msg = recordFlex(action, rec, S.ledger, S.members, ledgerUrl(S.ledger.id));
-  if (line.demo) return toast('示範模式：已略過分享到 LINE');
-  if (await sendToChat([msg])) return;
-  if (S.ledger.groupId) { try { await store.notifyGroup(S.ledger.id, [msg]); return; } catch { /* fallthrough */ } }
-  toast('未在 LINE 聊天室中開啟，這次沒有分享');
+  await shareToGroup([recordFlex(action, rec, S.ledger, S.members, ledgerUrl(S.ledger.id))], { quiet: true });
+}
+/** 只傳到帳本連結的群組；沒有連結就不傳 */
+async function shareToGroup(messages, { quiet = false } = {}) {
+  if (line.demo) { toast('示範模式：已略過分享到 LINE'); return true; }
+  if (!S.ledger.groupId) {
+    if (!quiet) {
+      const t = messages.find((m) => m.type === 'text');
+      if (t) { copyText(t.text, '這本帳本沒有連結 LINE 群組，已複製文字'); return true; }
+      toast('這本帳本沒有連結 LINE 群組', 'err');
+    }
+    return false;
+  }
+  try {
+    const r = await store.notifyGroup(S.ledger.id, messages);
+    if (r && r.ok === false) throw new Error('LINE 拒絕了這則訊息');
+    toast(`已傳到「${S.ledger.groupName || 'LINE 群組'}」`);
+    return true;
+  } catch (e) { toast(`分享失敗：${e.message}`, 'err'); return false; }
 }
 
 // ============ 啟動 ============
