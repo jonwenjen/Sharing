@@ -13,6 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: 為程式檔加上版本號（避免快取造成新舊檔案混用）
+        run: |
+          V="${GITHUB_SHA::8}"
+          sed -i -E "s#(from '\./[a-z]+\.js)'#\1?v=$V'#g" web/js/*.js
+          sed -i -E "s#(src=\"js/app\.js)\"#\1?v=$V\"#; s#(href=\"css/app\.css)\"#\1?v=$V\"#" web/index.html
+          grep -c "?v=$V" web/index.html web/js/*.js || true
       - uses: actions/upload-pages-artifact@v3
         with: { path: web }
       - id: d
