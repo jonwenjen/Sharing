@@ -15,13 +15,19 @@ async function call(method, path, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`${data.error || '連線失敗'}（${res.status}，${method} ${path}）`);
+  if (!res.ok) {
+    const err = new Error(data.code ? data.error : `${data.error || '連線失敗'}（${res.status}，${method} ${path}）`);
+    err.code = data.code; err.status = res.status;
+    throw err;
+  }
   return data;
 }
 const remote = {
   listLedgers: () => call('GET', '/api/me/ledgers'),
   groupLedgers: (gid) => call('GET', `/api/groups/${encodeURIComponent(gid)}/ledgers`),
-  getLedger: (id) => call('GET', `/api/ledgers/${id}`),
+  me: () => call('GET', '/api/me'),
+  getLedger: (id, join) => call('GET', `/api/ledgers/${id}${join ? `?join=${encodeURIComponent(join)}` : ''}`),
+  resetInvite: (id) => call('POST', `/api/ledgers/${id}/invite/reset`),
   createLedger: (d) => call('POST', '/api/ledgers', d),
   updateLedger: (id, p) => call('PATCH', `/api/ledgers/${id}`, p),
   deleteLedger: (id) => call('DELETE', `/api/ledgers/${id}`),
@@ -58,7 +64,7 @@ function seed() {
     r({ type: 'expense', title: '唐吉訶德', category: 'shopping', amount: 8600, currency: 'JPY', rate: 0.213, payerId: 'm3', split: { mode: 'amount', parts: { m3: 5000, m2: 3600 } }, date: '2026-12-03' }),
   ];
   return {
-    ledgers: [{ id: L, name: '東京五日遊', baseCurrency: 'TWD', groupId: null, createdBy: 'demo', fundEnabled: 1, fundCustodian: 'm0', shareDefault: 1, archived: 0, fixedRates: {}, createdAt: now(), updatedAt: now() }],
+    ledgers: [{ id: L, name: '東京五日遊', baseCurrency: 'TWD', groupId: null, createdBy: 'demo', fundEnabled: 1, fundCustodian: 'm0', shareDefault: 1, archived: 0, fixedRates: {}, inviteCode: 'demoinvite0001', creatorName: '小安', groupName: '東京旅遊團', createdAt: now(), updatedAt: now() }],
     members: m, records,
   };
 }
@@ -73,15 +79,18 @@ const demo = {
     ...l,
     memberCount: db.members.filter((x) => x.ledgerId === l.id && x.active).length,
     myMemberId: (db.members.find((x) => x.ledgerId === l.id && x.lineUserId === me()) || {}).id || null,
+    isCreator: l.createdBy === me(),
   }))),
   groupLedgers: () => wait([]),
+  me: () => wait({ userId: me(), name: line.profile.displayName, isAdmin: false }),
+  resetInvite: (id) => mutate((db) => Object.assign(db.ledgers.find((l) => l.id === id), { inviteCode: uid() })),
   getLedger: (id) => mutate((db) => {
     const ledger = db.ledgers.find((l) => l.id === id && !l.deleted);
     if (!ledger) throw new Error('找不到這本帳本');
-    return { ledger, members: db.members.filter((x) => x.ledgerId === id), records: db.records.filter((r) => r.ledgerId === id && !r.deleted) };
+    return { ledger, members: db.members.filter((x) => x.ledgerId === id), records: db.records.filter((r) => r.ledgerId === id && !r.deleted), viewer: { isAdmin: false, isCreator: ledger.createdBy === me() } };
   }),
   createLedger: (d) => mutate((db) => {
-    const l = { id: uid(), name: d.name, baseCurrency: d.baseCurrency || 'TWD', groupId: d.groupId || null, createdBy: me(), fundEnabled: 0, fundCustodian: null, shareDefault: 1, archived: 0, fixedRates: {}, createdAt: now(), updatedAt: now() };
+    const l = { id: uid(), name: d.name, baseCurrency: d.baseCurrency || 'TWD', groupId: d.groupId || null, createdBy: me(), fundEnabled: 0, fundCustodian: null, shareDefault: 1, archived: 0, fixedRates: {}, inviteCode: uid(), creatorName: line.profile.displayName, groupName: null, createdAt: now(), updatedAt: now() };
     db.ledgers.unshift(l);
     (d.members || []).forEach((name, i) => db.members.push({ id: uid(), ledgerId: l.id, name, lineUserId: i === 0 && d.claimFirst ? me() : null, avatar: i === 0 && d.claimFirst ? line.profile.pictureUrl : '', payInfo: {}, active: 1 }));
     return l;

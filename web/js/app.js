@@ -26,7 +26,7 @@ async function run(fn, okMsg) {
 }
 function setUrl(params) {
   const u = new URL(location.href);
-  ['l', 'g', 'r', 'tab'].forEach((k) => u.searchParams.delete(k));
+  ['l', 'g', 'r', 'tab', 'join'].forEach((k) => u.searchParams.delete(k));
   for (const [k, v] of Object.entries(params)) if (v) u.searchParams.set(k, v);
   history.replaceState(null, '', u);
 }
@@ -38,25 +38,59 @@ async function home() {
   const list = await run(() => store.listLedgers());
   const groupList = S.groupId ? await store.groupLedgers(S.groupId).catch(() => []) : [];
   const mine = new Set(list.map((l) => l.id));
-  const card = (l) => h('button', { class: 'ledger-card', onclick: () => openLedger(l.id) },
+  const card = (l) => h('button', { class: `ledger-card ${l.viaAdmin ? 'admin-view' : ''}`, onclick: () => openLedger(l.id) },
     h('span', { class: 'lc-cur' }, l.baseCurrency),
     h('span', { class: 'lc-main' },
-      h('strong', {}, l.name, l.archived ? h('em', { class: 'tag' }, '已封存') : null),
-      h('small', {}, `${l.memberCount ?? '–'} 位成員`, l.groupId ? '，已連結 LINE 群組' : '')),
+      h('strong', {}, l.name),
+      h('span', { class: 'lc-tags' },
+        l.isCreator ? h('em', { class: 'tag mine' }, '我建立的') : null,
+        l.viaAdmin ? h('em', { class: 'tag admin' }, '管理員檢視') : null,
+        l.archived ? h('em', { class: 'tag' }, '已封存') : null),
+      h('small', { class: 'lc-meta' },
+        h('span', {}, l.groupId ? `👥 ${l.groupName || 'LINE 群組'}` : '未連結群組'),
+        h('span', {}, `建立者 ${l.creatorName || '—'}`),
+        h('span', {}, `${l.memberCount ?? '–'} 位成員`))),
     icon('arrow', 18));
   const groupOnly = groupList.filter((l) => !mine.has(l.id));
+  const own = list.filter((l) => !l.viaAdmin);
+  const adminOnly = list.filter((l) => l.viaAdmin);
+  const sortA = (arr) => [...arr.filter((l) => !l.archived), ...arr.filter((l) => l.archived)];
   mount(app,
     h('header', { class: 'top home-top' },
       h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, 'S'), 'Sharing'),
-      h('div', { class: 'me-chip' }, avatar({ name: line.profile.displayName, avatar: line.profile.pictureUrl }, 30))),
+      h('button', { class: 'me-chip', 'aria-label': '我的帳號', onclick: accountSheet }, S.me && S.me.isAdmin ? h('em', { class: 'tag admin' }, '管理員') : null, avatar({ name: line.profile.displayName, avatar: line.profile.pictureUrl }, 30))),
     line.demo ? h('p', { class: 'demo-note' }, '示範模式：資料只存在這支手機的瀏覽器。', h('button', { class: 'link', onclick: async () => { await store.reset(); home(); } }, '重設示範資料')) : null,
     h('main', { class: 'home' },
       h('h1', { class: 'home-title' }, '帳本'),
       groupOnly.length ? h('section', {}, h('h3', { class: 'sec-title' }, '這個 LINE 群組的帳本'), h('div', { class: 'stack' }, groupOnly.map(card))) : null,
-      list.length
-        ? h('div', { class: 'stack' }, list.filter((l) => !l.archived).map(card), list.filter((l) => l.archived).map(card))
-        : h('div', { class: 'empty' }, h('p', {}, '還沒有帳本。建立一本，把朋友拉進來一起記。')),
+      own.length
+        ? h('div', { class: 'stack' }, sortA(own).map(card))
+        : adminOnly.length ? h('p', { class: 'hint' }, '你還沒有自己的帳本。')
+          : h('div', { class: 'empty' }, h('p', {}, '還沒有帳本。建立一本，或請朋友傳邀請連結給你。')),
+      adminOnly.length ? h('section', {}, h('h3', { class: 'sec-title' }, `其他帳本（管理員可檢視，共 ${adminOnly.length} 本）`), h('div', { class: 'stack' }, sortA(adminOnly).map(card))) : null,
       h('button', { class: 'btn primary block', onclick: createLedgerSheet }, icon('plus', 18), '建立帳本')));
+}
+
+function accountSheet() {
+  const me = S.me || { userId: line.profile.userId, isAdmin: false };
+  sheet('我的帳號', h('div', { class: 'form' },
+    h('div', { class: 'row gap' }, avatar({ name: line.profile.displayName, avatar: line.profile.pictureUrl }, 48),
+      h('div', {}, h('strong', {}, line.profile.displayName), h('small', { class: 'hint block' }, me.isAdmin ? '管理員：可看到並進入所有帳本' : '一般使用者'))),
+    field('LINE 使用者 ID', h('div', { class: 'row gap' }, h('code', { class: 'uid grow' }, me.userId), h('button', { class: 'btn ghost sm', onclick: () => copyText(me.userId, '已複製 ID') }, icon('copy', 16), '複製')),
+      '要設為管理員，請把這個 ID 填入後端 wrangler.toml 的 ADMIN_USER_IDS。')));
+}
+
+function noAccess(message) {
+  S.ledger = null;
+  setUrl({});
+  mount(app,
+    h('header', { class: 'top' }, h('button', { class: 'icon-btn', 'aria-label': '回帳本列表', onclick: home }, icon('back')), h('h1', { class: 'top-title' }, '沒有權限')),
+    h('div', { class: 'empty fatal-lite' },
+      h('p', { class: 'big' }, '🔒'),
+      h('p', { class: 'big' }, '無法開啟這本帳本'),
+      h('p', {}, message),
+      h('p', { class: 'hint' }, '只有帳本成員、LINE 群組成員，或收到邀請連結的人才能進入。'),
+      h('button', { class: 'btn primary', onclick: home }, '回帳本列表')));
 }
 
 function createLedgerSheet() {
@@ -81,16 +115,21 @@ function createLedgerSheet() {
 }
 
 // ============ 帳本 ============
-async function openLedger(id, { keepScroll = false } = {}) {
+async function openLedger(id, { keepScroll = false, join = null } = {}) {
   const y = window.scrollY;
-  const data = await run(() => store.getLedger(id)).catch(() => null);
-  if (!data) return home();
-  Object.assign(S, { ledger: data.ledger, members: data.members, records: data.records });
+  let data = null;
+  busy(true);
+  try { data = await store.getLedger(id, join); }
+  catch (e) { busy(false); if (e.code === 'NO_ACCESS') return noAccess(e.message); toast(e.message || '無法開啟帳本', 'err'); return home(); }
+  busy(false);
+  if (join) toast('已加入帳本');
+  Object.assign(S, { ledger: data.ledger, members: data.members, records: data.records, viewer: data.viewer || {} });
   S.meId = (S.members.find((m) => m.lineUserId === line.profile.userId) || {}).id || null;
   setUrl({ l: id });
   renderLedger();
   if (keepScroll) window.scrollTo(0, y);
-  if (!S.meId && !S._askedIdentity) { S._askedIdentity = true; identitySheet(); }
+  const adminOnly = S.viewer.isAdmin && !S.meId && !S.viewer.isCreator;
+  if (!S.meId && !S._askedIdentity && !adminOnly) { S._askedIdentity = true; identitySheet(); }
 }
 const reload = () => openLedger(S.ledger.id, { keepScroll: true });
 
@@ -117,7 +156,10 @@ function renderLedger() {
       h('button', { class: 'icon-btn', 'aria-label': '回帳本列表', onclick: home }, icon('back')),
       h('h1', { class: 'top-title' }, S.ledger.name),
       h('button', { class: 'icon-btn', 'aria-label': '帳本設定', onclick: settingsSheet }, icon('gear'))),
-    h('main', { class: 'ledger' }, ticket,
+    h('main', { class: 'ledger' },
+      S.viewer && S.viewer.isAdmin && !S.meId ? h('p', { class: 'admin-banner' }, '🔑 管理員檢視：你不是這本帳本的成員') : null,
+      h('p', { class: 'ledger-meta' }, S.ledger.groupId ? `👥 ${S.ledger.groupName || 'LINE 群組'}` : '未連結群組', `　建立者 ${S.ledger.creatorName || '—'}`),
+      ticket,
       h('nav', { class: 'tabs', role: 'tablist' }, tabs.map(([k, label]) => h('button', {
         role: 'tab', 'aria-selected': String(S.tab === k), class: S.tab === k ? 'on' : '',
         onclick: () => { S.tab = k; renderLedger(); },
@@ -335,7 +377,7 @@ function exportBox(net) {
 
 // ---- 成員 ----
 function membersTab() {
-  const link = ledgerUrl(S.ledger.id);
+  const link = ledgerUrl(S.ledger.id, S.ledger.inviteCode);
   const addInput = h('input', { class: 'input', placeholder: '新成員名字', maxlength: 20, onkeydown: (e) => e.key === 'Enter' && addMember() });
   const addMember = async () => {
     const v = addInput.value.trim(); if (!v) return;
@@ -348,7 +390,7 @@ function membersTab() {
   } });
   return [
     h('div', { class: 'invite' },
-      h('div', {}, h('strong', {}, '邀請朋友加入'), h('p', { class: 'hint' }, '朋友點開連結後，選擇自己是哪一位就能一起記帳。')),
+      h('div', {}, h('strong', {}, '邀請朋友加入'), h('p', { class: 'hint' }, '只有拿到這個連結的人能加入。朋友點開後，選擇自己是哪一位就能一起記帳。連結外洩時，可在帳本設定重設。')),
       h('div', { class: 'row gap' },
         h('button', { class: 'btn primary grow', onclick: async () => {
           if (await pickAndShare([inviteFlex(S.ledger, link)])) toast('已送出邀請');
@@ -447,7 +489,12 @@ function settingsSheet() {
     h('button', { class: 'btn primary block', onclick: async () => {
       await run(() => store.updateLedger(S.ledger.id, { name: name.value.trim() || S.ledger.name, baseCurrency: cur.value, shareDefault: share.checked ? 1 : 0, fixedRates: Object.fromEntries(Object.entries(fr).filter(([, v]) => Number(v) > 0).map(([c, v]) => [c, Number(v)])) }), '已儲存'); close(); reload();
     } }, '儲存'),
-    h('button', { class: 'btn ghost block', onclick: () => copyText(ledgerUrl(S.ledger.id), '已複製帳本連結') }, icon('copy', 18), '複製帳本連結'),
+    h('button', { class: 'btn ghost block', onclick: () => copyText(ledgerUrl(S.ledger.id), '已複製帳本連結（限成員開啟）') }, icon('copy', 18), '複製帳本連結（限成員）'),
+    h('button', { class: 'btn ghost block', onclick: async () => {
+      if (!(await confirmBox('重設後，舊的邀請連結會立刻失效；已經加入的人不受影響。', '重設邀請連結'))) return;
+      const l = await run(() => store.resetInvite(S.ledger.id), '已重設邀請連結');
+      S.ledger.inviteCode = l.inviteCode; close();
+    } }, '重設邀請連結'),
     h('button', { class: 'btn ghost block', onclick: async () => { await run(() => store.updateLedger(S.ledger.id, { archived: S.ledger.archived ? 0 : 1 }), S.ledger.archived ? '已取消封存' : '已封存'); close(); reload(); } }, S.ledger.archived ? '取消封存' : '封存帳本（不能再新增紀錄）'),
     h('button', { class: 'btn text-danger block', onclick: async () => {
       if (!(await confirmBox(`刪除「${S.ledger.name}」？所有紀錄都會消失，無法復原。`, '刪除帳本', { danger: true }))) return;
@@ -644,9 +691,10 @@ async function shareRecord(action, rec) {
     const qs = new URLSearchParams(location.search);
     S.groupId = qs.get('g');
     const l = qs.get('l');
+    if (!line.demo) S.me = await store.me().catch(() => null);
     if (['list', 'settle', 'stats', 'members'].includes(qs.get('tab'))) S.tab = qs.get('tab');
     if (l) {
-      await openLedger(l);
+      await openLedger(l, { join: qs.get('join') });
       const rid = qs.get('r');
       const rec = rid && S.records.find((x) => x.id === rid);
       if (rec) editor(rec);

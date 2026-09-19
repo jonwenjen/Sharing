@@ -23,11 +23,13 @@ export async function initLine() {
   return state;
 }
 
-export function ledgerUrl(id) {
-  if (CONFIG.LIFF_ID && !state.demo) return `https://liff.line.me/${CONFIG.LIFF_ID}?l=${id}`;
+/** 帳本連結；帶 join（邀請碼）時，沒有權限的人也能用它加入 */
+export function ledgerUrl(id, join) {
+  if (CONFIG.LIFF_ID && !state.demo) return `https://liff.line.me/${CONFIG.LIFF_ID}?l=${id}${join ? `&join=${join}` : ''}`;
   const u = new URL(location.href);
   u.search = '';
   u.searchParams.set('l', id);
+  if (join) u.searchParams.set('join', join);
   if (state.demo) u.searchParams.set('demo', '1');
   return u.toString();
 }
