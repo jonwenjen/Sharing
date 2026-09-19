@@ -284,6 +284,19 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .split-row input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--cobalt); flex: none; }
 .split-pv { min-width: 72px; text-align: right; font: 600 14px var(--num); color: var(--muted); font-variant-numeric: tabular-nums; }
 .split-sum { text-align: right; }
+.fill-opt { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.fill-opt .hint { margin: 0; white-space: nowrap; }
+.fill-opt .seg { flex: 1; }
+.chips.cats { gap: 6px; }
+.chips.cats .chip { padding: 0 12px; }
+.help { display: grid; gap: 10px; }
+.help details { background: var(--card); border-radius: var(--r-md); padding: 4px 14px; }
+.help summary { cursor: pointer; font-weight: 700; padding: 10px 0; list-style: none; display: flex; justify-content: space-between; }
+.help summary::after { content: '＋'; color: var(--muted); }
+.help details[open] summary::after { content: '－'; }
+.help ul { margin: 0 0 12px; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; }
+.help code { font: 13px ui-monospace, Menlo, monospace; background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; white-space: nowrap; }
+.top-actions { display: flex; align-items: center; }
 .share-toggle { background: var(--card); border-radius: var(--r-md); padding: 12px 14px; }
 
 /* 提示 */
