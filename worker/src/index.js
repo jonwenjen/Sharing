@@ -483,6 +483,13 @@ async function api(req, env, url) {
       }
       for (const [k, col] of [['fundEnabled', 'fund_enabled'], ['shareDefault', 'share_default'], ['archived', 'archived']]) if (body[k] != null) f[col] = body[k] ? 1 : 0;
       if (body.fundCustodian !== undefined) f.fund_custodian = body.fundCustodian || null;
+      if (body.groupId !== undefined) {
+        const isMember = l.created_by === user.sub || (await env.DB.prepare('SELECT 1 FROM members WHERE ledger_id = ? AND line_user_id = ?').bind(lid, user.sub).first());
+        if (!isMember) throw new HttpError(403, '只有帳本成員可以變更連結的群組');
+        if (body.groupId && !(await isGroupMember(env, body.groupId, user.sub))) throw new HttpError(403, '你不在這個 LINE 群組裡，或記帳機器人還沒加入該群組');
+        f.group_id = body.groupId || null;
+        f.group_name = body.groupId ? await groupName(env, body.groupId) : null;
+      }
       if (body.fixedRates && typeof body.fixedRates === 'object') {
         const fr = {};
         for (const [c, v] of Object.entries(body.fixedRates)) if (CURRENCIES[c] && c !== l.base_currency && Number(v) > 0) fr[c] = Number(v);
