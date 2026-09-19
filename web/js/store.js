@@ -26,6 +26,7 @@ const remote = {
   listLedgers: () => call('GET', '/api/me/ledgers'),
   groupLedgers: (gid) => call('GET', `/api/groups/${encodeURIComponent(gid)}/ledgers`),
   me: () => call('GET', '/api/me'),
+  updateMe: (p) => call('PATCH', '/api/me', p),
   getLedger: (id, join) => call('GET', `/api/ledgers/${id}${join ? `?join=${encodeURIComponent(join)}` : ''}`),
   resetInvite: (id) => call('POST', `/api/ledgers/${id}/invite/reset`),
   createLedger: (d) => call('POST', '/api/ledgers', d),
@@ -82,7 +83,13 @@ const demo = {
     isCreator: l.createdBy === me(),
   }))),
   groupLedgers: () => wait([]),
-  me: () => wait({ userId: me(), name: line.profile.displayName, isAdmin: false }),
+  me: () => mutate((db) => ({ userId: me(), name: line.profile.displayName, isAdmin: false, payInfo: (db.profiles || {})[me()] || {} })),
+  updateMe: (p) => mutate((db) => {
+    db.profiles = db.profiles || {};
+    db.profiles[me()] = p.payInfo;
+    db.members.forEach((x) => { if (x.lineUserId === me()) x.payInfo = { ...p.payInfo }; });
+    return { userId: me(), name: line.profile.displayName, isAdmin: false, payInfo: p.payInfo };
+  }),
   resetInvite: (id) => mutate((db) => Object.assign(db.ledgers.find((l) => l.id === id), { inviteCode: uid() })),
   getLedger: (id) => mutate((db) => {
     const ledger = db.ledgers.find((l) => l.id === id && !l.deleted);
@@ -101,13 +108,21 @@ const demo = {
   updateMember: (mid, p) => mutate((db) => {
     const m = db.members.find((x) => x.id === mid);
     if (p.payInfo && m.lineUserId && m.lineUserId !== me()) throw new Error('只能修改自己的匯款資訊');
-    return Object.assign(m, p);
+    const { syncAll, ...rest } = p;
+    if (p.payInfo && m.lineUserId === me() && syncAll !== false) {
+      db.profiles = db.profiles || {};
+      db.profiles[me()] = p.payInfo;
+      db.members.forEach((x) => { if (x.lineUserId === me()) x.payInfo = { ...p.payInfo }; });
+    }
+    return Object.assign(m, rest);
   }),
   claimMember: (mid) => mutate((db) => {
     const m = db.members.find((x) => x.id === mid);
     if (m.lineUserId && m.lineUserId !== me()) throw new Error('這位成員已被其他人認領');
     db.members.forEach((x) => { if (x.ledgerId === m.ledgerId && x.lineUserId === me()) { x.lineUserId = null; x.avatar = ''; } });
     m.lineUserId = me(); m.avatar = line.profile.pictureUrl || '';
+    const saved = (db.profiles || {})[me()];
+    if (saved && !Object.values(m.payInfo || {}).some(Boolean)) m.payInfo = { ...saved };
     return m;
   }),
   removeMember: (mid) => mutate((db) => {

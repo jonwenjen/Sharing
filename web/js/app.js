@@ -71,13 +71,35 @@ async function home() {
       h('button', { class: 'btn primary block', onclick: createLedgerSheet }, icon('plus', 18), '建立帳本')));
 }
 
-function accountSheet() {
-  const me = S.me || { userId: line.profile.userId, isAdmin: false };
-  sheet('我的帳號', h('div', { class: 'form' },
+/** 匯款資訊欄位；回傳 { el, value() } */
+function payFields(pi = {}, disabled = false) {
+  const f = {};
+  const inp = (k, ph, mode) => (f[k] = h('input', { class: 'input', value: pi[k] || '', placeholder: ph, disabled, inputmode: mode || 'text', 'aria-label': ph }));
+  const el = h('div', { class: 'form' },
+    h('div', { class: 'grid2' }, field('銀行', inp('bank', '國泰世華')), field('銀行代碼', inp('bankCode', '013', 'numeric'))),
+    field('帳號', inp('account', '帳號', 'numeric')),
+    h('div', { class: 'grid2' }, field('LINE Pay', inp('linePay', '手機或 ID')), field('街口', inp('jko', '街口帳號'))),
+    field('備註', inp('note', '例如：請備註名字')));
+  return { el, value: () => Object.fromEntries(Object.entries(f).map(([k, x]) => [k, x.value.trim()])) };
+}
+
+async function accountSheet() {
+  if (!S.me) S.me = await store.me().catch(() => null);
+  const me = S.me || { userId: line.profile.userId, isAdmin: false, payInfo: {} };
+  const pay = payFields(me.payInfo || {});
+  const close = sheet('我的帳號', h('div', { class: 'form' },
     h('div', { class: 'row gap' }, avatar({ name: line.profile.displayName, avatar: line.profile.pictureUrl }, 48),
       h('div', {}, h('strong', {}, line.profile.displayName), h('small', { class: 'hint block' }, me.isAdmin ? '管理員：可看到並進入所有帳本' : '一般使用者'))),
+    h('h3', { class: 'sec-title' }, '我的匯款資訊'),
+    h('p', { class: 'hint' }, '只要填一次。儲存後會同步到你所有的帳本，加入新帳本時也會自動帶入。'),
+    pay.el,
+    h('button', { class: 'btn primary block', onclick: async () => {
+      S.me = await run(() => store.updateMe({ payInfo: pay.value() }), '已儲存，所有帳本已同步');
+      close();
+      if (S.ledger) reload();
+    } }, '儲存匯款資訊'),
     field('LINE 使用者 ID', h('div', { class: 'row gap' }, h('code', { class: 'uid grow' }, me.userId), h('button', { class: 'btn ghost sm', onclick: () => copyText(me.userId, '已複製 ID') }, icon('copy', 16), '複製')),
-      '要設為管理員，請把這個 ID 填入後端 wrangler.toml 的 ADMIN_USER_IDS。')));
+      '要設為管理員，請把這個 ID 填入後端 wrangler.toml 的 ADMIN_USER_IDS。')), { tall: true });
 }
 
 function noAccess(message) {
@@ -418,20 +440,22 @@ function memberSheet(m) {
   const editable = !m.lineUserId || m.id === S.meId;
   const pi = m.payInfo || {};
   const name = h('input', { class: 'input', value: m.name, maxlength: 20 });
-  const f = {};
-  const inp = (k, ph, mode) => (f[k] = h('input', { class: 'input', value: pi[k] || '', placeholder: ph, disabled: !editable, inputmode: mode || 'text' }));
+  const isMe = m.id === S.meId;
+  const pay = payFields(pi, !editable);
+  const sync = h('input', { type: 'checkbox', class: 'switch', checked: true });
   const close = sheet(m.name, h('div', { class: 'form' },
     field('顯示名稱', name),
     h('h3', { class: 'sec-title' }, '匯款資訊'),
     editable ? null : h('p', { class: 'hint' }, `只有 ${m.name} 本人可以修改匯款資訊。`),
-    h('div', { class: 'grid2' }, field('銀行', inp('bank', '國泰世華')), field('銀行代碼', inp('bankCode', '013', 'numeric'))),
-    field('帳號', inp('account', '帳號', 'numeric')),
-    h('div', { class: 'grid2' }, field('LINE Pay', inp('linePay', '手機或 ID')), field('街口', inp('jko', '街口帳號'))),
-    field('備註', inp('note', '例如：請備註名字')),
+    pay.el,
+    isMe ? h('label', { class: 'row between share-toggle' }, h('span', {}, '同步到我所有的帳本', h('small', { class: 'hint block' }, '記住這份資料，其他帳本和之後加入的帳本都自動帶入')), sync) : null,
     h('button', { class: 'btn primary block', onclick: async () => {
       const patch = { name: name.value.trim() || m.name };
-      if (editable) patch.payInfo = Object.fromEntries(Object.entries(f).map(([k, el]) => [k, el.value.trim()]));
-      await run(() => store.updateMember(m.id, patch), '已儲存'); close(); reload();
+      if (editable) patch.payInfo = pay.value();
+      if (isMe) patch.syncAll = sync.checked;
+      await run(() => store.updateMember(m.id, patch), isMe && sync.checked ? '已儲存，所有帳本已同步' : '已儲存');
+      if (isMe && sync.checked && S.me) S.me.payInfo = patch.payInfo;
+      close(); reload();
     } }, '儲存'),
     !m.lineUserId && m.id !== S.meId ? h('button', { class: 'btn ghost block', onclick: async () => { await run(() => store.claimMember(m.id), `你現在是 ${m.name}`); close(); reload(); } }, icon('user', 18), '這是我') : null,
     m.active ? h('button', { class: 'btn text-danger block', onclick: async () => {
