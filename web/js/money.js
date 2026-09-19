@@ -91,12 +91,37 @@ export const recordBaseMinor = (rec, base) =>
   toMinor(Number(rec.amount) * (rec.currency === base ? 1 : Number(rec.rate || 0)), base);
 
 /** 回傳 { total, shares: {memberId: minor} }（基準幣別最小單位） */
+const isBlank = (v) => v === '' || v === null || v === undefined;
+
+/**
+ * 自訂金額模式的分配：有填金額的人照填的算；勾選但沒填的人，平分剩下的金額。
+ * 回傳 { weights, fixedSum, remainder, blanks, error }
+ */
+export function amountSplit(parts, amount, currency) {
+  const fixed = Object.entries(parts || {}).filter(([, v]) => !isBlank(v) && v !== true);
+  const blanks = Object.entries(parts || {}).filter(([, v]) => isBlank(v) || v === true).map(([id]) => id);
+  const fixedSum = fixed.reduce((a, [, v]) => a + (Number(v) || 0), 0);
+  const total = Number(amount) || 0;
+  const diff = toMinor(total, currency) - toMinor(fixedSum, currency);
+  const remainder = fromMinor(diff, currency);
+  let error = null;
+  if (fixed.some(([, v]) => !(Number(v) >= 0))) error = '自訂金額要是數字';
+  else if (diff < 0) error = `自訂金額超出總金額 ${formatMoney(-remainder, currency)}`;
+  else if (diff > 0 && !blanks.length) error = `還差 ${formatMoney(remainder, currency)}，請補上金額或留空讓其他人平分`;
+  const weights = {};
+  for (const [id, v] of fixed) weights[id] = Number(v) || 0;
+  if (blanks.length && diff > 0) for (const id of blanks) weights[id] = remainder / blanks.length;
+  return { weights, fixedSum, remainder, blanks, error };
+}
+
+/** 回傳 { total, shares: {memberId: minor} }（基準幣別最小單位） */
 export function recordShares(rec, base) {
   const total = recordBaseMinor(rec, base);
   const parts = (rec.split && rec.split.parts) || {};
   const mode = (rec.split && rec.split.mode) || 'equal';
-  const weights = {};
-  for (const [id, v] of Object.entries(parts)) weights[id] = mode === 'equal' ? (v ? 1 : 0) : Number(v) || 0;
+  let weights = {};
+  if (mode === 'amount') weights = amountSplit(parts, rec.amount, rec.currency).weights;
+  else for (const [id, v] of Object.entries(parts)) weights[id] = mode === 'equal' ? (v ? 1 : 0) : Number(v) || 0;
   return { total, shares: allocate(total, weights) };
 }
 
@@ -108,11 +133,14 @@ export function validateRecord(rec) {
   if (!CURRENCIES[rec.currency]) errs.push('不支援的幣別');
   if (!rec.payerId) errs.push('請選擇付款人');
   const parts = (rec.split && rec.split.parts) || {};
-  const ids = Object.keys(parts).filter((k) => Number(parts[k]) > 0 || parts[k] === true);
+  const isAmount = rec.split && rec.split.mode === 'amount';
+  const ids = isAmount
+    ? Object.keys(amountSplit(parts, rec.amount, rec.currency).weights).filter((k) => amountSplit(parts, rec.amount, rec.currency).weights[k] > 0)
+    : Object.keys(parts).filter((k) => Number(parts[k]) > 0 || parts[k] === true);
   if (!ids.length) errs.push('至少選一位分攤成員');
-  if (rec.split && rec.split.mode === 'amount') {
-    const sum = ids.reduce((s, k) => s + Number(parts[k]), 0);
-    if (Math.abs(toMinor(sum, rec.currency) - toMinor(rec.amount, rec.currency)) > 0) errs.push('自訂金額加總需等於總金額');
+  if (isAmount && CURRENCIES[rec.currency]) {
+    const r = amountSplit(parts, rec.amount, rec.currency);
+    if (r.error) errs.push(r.error);
   }
   if (rec.type === 'transfer' && ids.includes(rec.payerId)) errs.push('轉帳對象不能是自己');
   return errs;
