@@ -81,6 +81,7 @@ h1, h2, h3 { margin: 0; line-height: 1.25; }
 .btn.ghost { background: var(--card); border-color: var(--line); }
 .btn.danger { background: var(--neg); color: #fff; }
 .btn.text-danger { background: transparent; color: var(--neg); }
+.btn.text { background: transparent; color: var(--muted); }
 .btn.sm { min-height: 38px; font-size: 14px; padding: 0 14px; }
 .form { display: grid; gap: 16px; }
 .form > *, .grid2 > *, .field > * { min-width: 0; }
