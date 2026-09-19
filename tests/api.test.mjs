@@ -4,13 +4,17 @@ import { createHmac } from 'node:crypto';
 import { createD1 } from './d1-shim.mjs';
 import worker from '../worker/src/index.js';
 
-const env = { DB: createD1(new URL('../worker/schema.sql', import.meta.url)), DEV_MODE: '1', ALLOWED_ORIGINS: '*', LIFF_ID: '2001234567-AbCd', LINE_LOGIN_CHANNEL_ID: '2001234567', LINE_CHANNEL_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'tok' };
+const env = { DB: createD1(new URL('../worker/schema.sql', import.meta.url)), DEV_MODE: '1', ALLOWED_ORIGINS: '*', ADMIN_USER_IDS: 'boss', LIFF_ID: '2001234567-AbCd', LINE_LOGIN_CHANNEL_ID: '2001234567', LINE_CHANNEL_SECRET: 'secret', LINE_CHANNEL_ACCESS_TOKEN: 'tok' };
 const sent = [];
+const GROUP = new Set(['robin', 'zhe', 'mimi']);
 const rateCalls = [];
 globalThis.caches = { default: { match: async () => null, put: async () => {} } };
 globalThis.fetch = async (url, opt) => {
   if (String(url).endsWith('/v2/bot/info')) return new Response(JSON.stringify({ displayName: '記帳小幫手', basicId: '@abc' }));
   if (String(url).endsWith('/webhook/endpoint')) return new Response(JSON.stringify({ endpoint: 'https://api.test/webhook', active: true }));
+  const gm = String(url).match(/\/v2\/bot\/group\/([^/]+)\/member\/([^/?]+)/);
+  if (gm) return new Response('{}', { status: GROUP.has(decodeURIComponent(gm[2])) ? 200 : 404 });
+  if (/\/v2\/bot\/group\/[^/]+\/summary/.test(String(url))) return new Response(JSON.stringify({ groupName: '東京旅遊團' }));
   if (String(url).includes('api.line.me/v2/bot')) { sent.push({ url: String(url), body: JSON.parse(opt.body) }); return new Response('{}'); }
   if (String(url).includes('currency-api')) {
     const m = String(url).match(/currency-api@([\w-]+)/);
@@ -205,4 +209,80 @@ test('帳本固定匯率：只接受有效幣別，並用於訊息記帳', async
   const rec = g.data.records.find((x) => x.title === '咖啡');
   assert.equal(rec.rate, 0.21);
   assert.equal(rec.currency, 'JPY');
+});
+
+test('舊版資料庫缺 fixed_rates 欄位時自動補上', async () => {
+  const { createD1: mk } = await import('./d1-shim.mjs');
+  const { ensureSchema } = await import('../worker/src/index.js');
+  const { writeFileSync, readFileSync, mkdtempSync } = await import('node:fs');
+  const dir = mkdtempSync('/tmp/sch');
+  writeFileSync(dir + '/old.sql', readFileSync(new URL('../worker/schema.sql', import.meta.url), 'utf8').replace("  fixed_rates TEXT DEFAULT '{}',\n", ''));
+  const db = mk(dir + '/old.sql');
+  await assert.rejects(db.prepare('SELECT fixed_rates FROM ledgers').first());
+  // 模組層級旗標已被前面測試設為 true，這裡直接測「沒有欄位」的路徑
+  const { ensureSchema: fresh } = await import('../worker/src/index.js?fresh=' + Date.now());
+  await fresh({ DB: db });
+  assert.ok((await db.prepare('SELECT fixed_rates FROM ledgers').all()).results);
+  void ensureSchema;
+});
+
+test('權限：陌生人看不到帳本，邀請連結可加入並保留權限', async () => {
+  const lr = await call('robin', 'POST', '/api/ledgers', { name: '私人帳本', members: ['Robin'], claimFirst: true });
+  const P = lr.data.id;
+  assert.ok(lr.data.inviteCode && lr.data.inviteCode.length >= 16);
+  assert.equal(lr.data.creatorName, 'robin');
+  const no = await call('eve', 'GET', `/api/ledgers/${P}`);
+  assert.equal(no.status, 403);
+  assert.equal(no.data.code, 'NO_ACCESS');
+  assert.equal((await call('eve', 'GET', `/api/ledgers/${P}?join=wrongcode`)).status, 403);
+  // 寫入類 API 也要擋
+  assert.equal((await call('eve', 'POST', `/api/ledgers/${P}/members`, { name: 'x' })).status, 403);
+  const g0 = await call('robin', 'GET', `/api/ledgers/${P}`);
+  const rid = (await call('robin', 'POST', `/api/ledgers/${P}/records`, { type: 'expense', amount: 100, currency: 'TWD', payerId: g0.data.members[0].id, split: { mode: 'equal', parts: { [g0.data.members[0].id]: true } }, date: '2026-12-01' })).data.id;
+  assert.equal((await call('eve', 'PATCH', `/api/records/${rid}`, { amount: 1 })).status, 403);
+  assert.equal((await call('eve', 'PATCH', `/api/members/${g0.data.members[0].id}`, { name: 'hack' })).status, 403);
+  assert.ok(!(await call('eve', 'GET', '/api/me/ledgers')).data.some((l) => l.id === P));
+  // 用邀請連結加入
+  const ok = await call('eve', 'GET', `/api/ledgers/${P}?join=${lr.data.inviteCode}`);
+  assert.equal(ok.status, 200);
+  assert.equal((await call('eve', 'GET', `/api/ledgers/${P}`)).status, 200, '加入後不用再帶連結');
+  assert.ok((await call('eve', 'GET', '/api/me/ledgers')).data.some((l) => l.id === P));
+  // 重設邀請連結：舊連結失效、已加入者不受影響；非成員不能重設
+  assert.equal((await call('eve', 'POST', `/api/ledgers/${P}/invite/reset`)).status, 403);
+  const reset = await call('robin', 'POST', `/api/ledgers/${P}/invite/reset`);
+  assert.notEqual(reset.data.inviteCode, lr.data.inviteCode);
+  const late = await call('frank', 'GET', `/api/ledgers/${P}?join=${lr.data.inviteCode}`);
+  assert.equal(late.status, 403);
+  assert.match(late.data.error, /失效/);
+  assert.equal((await call('eve', 'GET', `/api/ledgers/${P}`)).status, 200);
+});
+
+test('權限：LINE 群組成員可進入群組帳本，非成員不行；群組列表也會擋', async () => {
+  assert.equal((await call('mimi', 'GET', `/api/ledgers/${L}`)).status, 200);
+  assert.equal((await call('eve', 'GET', `/api/ledgers/${L}`)).status, 403);
+  assert.deepEqual((await call('eve', 'GET', '/api/groups/Cgroup1/ledgers')).data, []);
+  const g = await call('zhe', 'GET', '/api/groups/Cgroup1/ledgers');
+  assert.equal(g.data[0].groupName, '東京旅遊團');
+  // 偽造群組 ID 建帳本不會被連結到該群組
+  const fake = await call('eve', 'POST', '/api/ledgers', { name: '冒充', groupId: 'Cgroup1', members: ['Eve'] });
+  assert.equal(fake.data.groupId, null);
+});
+
+test('管理員：看得到並能進入所有帳本，列表有標示', async () => {
+  const me = await call('boss', 'GET', '/api/me');
+  assert.equal(me.data.isAdmin, true);
+  assert.equal((await call('robin', 'GET', '/api/me')).data.isAdmin, false);
+  const list = await call('boss', 'GET', '/api/me/ledgers');
+  assert.ok(list.data.length >= 3);
+  const tokyo = list.data.find((l) => l.id === L);
+  assert.equal(tokyo.viaAdmin, true);
+  assert.equal(tokyo.groupName, '東京旅遊團');
+  assert.equal(tokyo.creatorName, 'robin');
+  // 舊帳本沒有存建立者名稱時，改用建立者綁定的成員名稱
+  await env.DB.prepare('UPDATE ledgers SET creator_name = NULL WHERE id = ?').bind(L).run();
+  assert.equal((await call('boss', 'GET', '/api/me/ledgers')).data.find((l) => l.id === L).creatorName, 'Robin');
+  const g = await call('boss', 'GET', `/api/ledgers/${L}`);
+  assert.equal(g.status, 200);
+  assert.equal(g.data.viewer.isAdmin, true);
+  assert.equal((await call('boss', 'GET', '/api/me/ledgers')).data.find((l) => l.id === L).viaAdmin, true, '管理員檢視不會變成一般存取');
 });
