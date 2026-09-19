@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { allocate, recordShares, computeBalances, settlementBalances, fundCash, stats, validateRecord, formatMoney, FUND_ID } from '../web/js/money.js';
+import { amountSplit, allocate, recordShares, computeBalances, settlementBalances, fundCash, stats, validateRecord, formatMoney, FUND_ID } from '../web/js/money.js';
 
 const rec = (o) => ({ type: 'expense', currency: 'TWD', rate: 1, category: 'food', date: '2026-01-01', ...o });
 
@@ -77,4 +77,26 @@ test('格式化', () => {
   assert.equal(formatMoney(1234, 'TWD'), 'NT$1,234');
   assert.equal(formatMoney(-5.5, 'USD'), '-US$5.50');
   assert.equal(formatMoney(300, 'JPY', { sign: true }), '+¥300');
+});
+
+test('自訂金額：沒填金額的人平分剩下的', () => {
+  // 1000 元：A 填 400，B、C 留空 → B、C 各 300
+  const r = recordShares(rec({ amount: 1000, payerId: 'A', split: { mode: 'amount', parts: { A: 400, B: '', C: '' } } }), 'TWD');
+  assert.deepEqual(r.shares, { A: 400, B: 300, C: 300 });
+  assert.equal(validateRecord(rec({ amount: 1000, payerId: 'A', split: { mode: 'amount', parts: { A: 400, B: '', C: '' } } })).length, 0);
+  // 除不盡：100 元，A 填 1，其餘三人平分 99 → 33/33/33
+  const q = recordShares(rec({ amount: 100, payerId: 'A', split: { mode: 'amount', parts: { A: 1, B: '', C: '', D: '' } } }), 'TWD');
+  assert.equal(Object.values(q.shares).reduce((a, b) => a + b, 0), 100);
+  assert.deepEqual([q.shares.B, q.shares.C, q.shares.D], [33, 33, 33]);
+  // 外幣：3000 JPY，A 填 1000，B 留空 → B 分 2000 JPY 的台幣
+  const j = recordShares(rec({ amount: 3000, currency: 'JPY', rate: 0.2, payerId: 'A', split: { mode: 'amount', parts: { A: 1000, B: '' } } }), 'TWD');
+  assert.deepEqual(j.shares, { A: 200, B: 400 });
+  // 超出 → 錯誤；全部有填但不夠 → 錯誤（提示可留空）
+  assert.match(validateRecord(rec({ amount: 100, payerId: 'A', split: { mode: 'amount', parts: { A: 80, B: 30, C: '' } } }))[0], /超出/);
+  assert.match(validateRecord(rec({ amount: 100, payerId: 'A', split: { mode: 'amount', parts: { A: 50, B: 30 } } }))[0], /留空/);
+  // 剛好填滿、留空的人分 0
+  const z = recordShares(rec({ amount: 100, payerId: 'A', split: { mode: 'amount', parts: { A: 60, B: 40, C: '' } } }), 'TWD');
+  assert.deepEqual(z.shares, { A: 60, B: 40 });
+  // 填 0 的人不分攤
+  assert.equal(amountSplit({ A: 0, B: '' }, 100, 'TWD').weights.A, 0);
 });

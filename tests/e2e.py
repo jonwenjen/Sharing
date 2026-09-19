@@ -41,6 +41,11 @@ with sync_playwright() as p:
     dlg.get_by_placeholder('項目名稱，例如：晚餐').fill('便利商店')
     dlg.get_by_role('button', name='自訂金額').click()
     dlg.get_by_label('小安 金額').fill('2000'); dlg.get_by_label('阿哲 金額').fill('1000')
+    expect(dlg.get_by_label('米米 參與分攤')).to_be_checked()  # 自訂金額預設全員勾選
+    dlg.get_by_label('阿哲 金額').fill('')
+    expect(dlg.get_by_text('剩下 ¥1,000 由 3 位沒填金額的人平分', exact=False)).to_be_visible()  # 小安填 2000，其餘 3 人平分剩下
+    shot('05a-amount-remainder')
+    dlg.get_by_label('阿哲 金額').fill('1000')
     dlg.get_by_label('米米 參與分攤').uncheck(); dlg.get_by_label('Kai 參與分攤').uncheck()
     expect(dlg.get_by_text('金額剛好分配完畢')).to_be_visible()
     expect(dlg.locator('.rate-src')).to_contain_text('當日匯率')
