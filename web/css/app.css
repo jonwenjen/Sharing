@@ -123,6 +123,19 @@ select.input { appearance: none; background-image: linear-gradient(45deg, transp
 .lc-main { flex: 1; display: grid; gap: 2px; }
 .lc-main strong { color: var(--ink); font-size: 17px; }
 .lc-main small { font-size: 13px; }
+.lc-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.lc-tags:empty { display: none; }
+.lc-tags .tag { margin-left: 0; }
+.lc-meta { display: flex; flex-wrap: wrap; gap: 2px 10px; color: var(--muted); }
+.tag.mine { color: var(--cobalt); border-color: var(--cobalt-soft); background: var(--cobalt-soft); }
+.tag.admin { color: var(--warn-ink); border-color: transparent; background: var(--warn-bg); }
+.ledger-card.admin-view { box-shadow: inset 3px 0 0 var(--warn-ink); }
+.me-chip { display: flex; align-items: center; gap: 8px; border: 0; background: none; padding: 4px; border-radius: 99px; }
+.me-chip .tag { margin: 0; }
+.uid { font: 12px ui-monospace, Menlo, monospace; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; word-break: break-all; }
+.admin-banner { margin: 0 0 8px; padding: 8px 12px; border-radius: var(--r-sm); background: var(--warn-bg); color: var(--warn-ink); font-size: 13px; font-weight: 600; }
+.ledger-meta { margin: 0 4px 6px; font-size: 13px; color: var(--muted); }
+.fatal-lite { padding-top: 12dvh; }
 .empty { text-align: center; padding: 36px 16px; color: var(--muted); }
 .empty .big { font: 800 26px var(--num); color: var(--ink); margin: 0 0 6px; }
 .empty.fatal { padding-top: 30dvh; }
