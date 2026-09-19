@@ -319,3 +319,18 @@ test('匯款資訊記在個人：同步到所有帳本、新帳本自動帶入',
   // 別人不能改我的個人資料
   assert.equal((await call('robin', 'PATCH', `/api/members/${zheM.id}`, { payInfo: { account: 'x' } })).status, 403);
 });
+
+test('連結 LINE 群組：只有群組成員能連結，通知只會推播到連結的群組', async () => {
+  const nl = await call('robin', 'POST', '/api/ledgers', { name: '未連結', members: ['Robin'], claimFirst: true });
+  assert.equal(nl.data.groupId, null);
+  assert.equal((await call('robin', 'POST', `/api/ledgers/${nl.data.id}/notify`, { messages: [{ type: 'text', text: 'x' }] })).status, 400);
+  // eve 不在群組 → 不能連；robin 在群組 → 可以
+  await call('eve', 'GET', `/api/ledgers/${nl.data.id}?join=${nl.data.inviteCode}`);
+  assert.equal((await call('eve', 'PATCH', `/api/ledgers/${nl.data.id}`, { groupId: 'Cgroup1' })).status, 403);
+  const ok = await call('robin', 'PATCH', `/api/ledgers/${nl.data.id}`, { groupId: 'Cgroup1' });
+  assert.equal(ok.data.groupId, 'Cgroup1');
+  assert.equal(ok.data.groupName, '東京旅遊團');
+  await call('robin', 'POST', `/api/ledgers/${nl.data.id}/notify`, { messages: [{ type: 'text', text: 'hello' }] });
+  assert.equal(sent.at(-1).body.to, 'Cgroup1');
+  assert.match(sent.at(-1).url, /\/push$/);
+});

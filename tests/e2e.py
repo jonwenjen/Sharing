@@ -26,9 +26,18 @@ with sync_playwright() as p:
     pg.get_by_role('dialog').get_by_text('小安', exact=True).click()
     expect(pg.get_by_text('你是 小安')).to_be_visible(); pg.wait_for_timeout(300); shot('03-ledger-list')
     # 新增支出
+    pg.get_by_role('button', name='使用說明').click()
+    expect(pg.get_by_role('dialog', name='使用說明').get_by_text('在 LINE 直接打字記帳')).to_be_visible()
+    pg.get_by_role('dialog').get_by_text('記一筆', exact=True).click()
+    expect(pg.get_by_role('dialog').get_by_text('所有人平均', exact=False).first).to_be_visible()
+    shot('17-help')
+    pg.keyboard.press('Escape'); pg.wait_for_timeout(300)
     pg.get_by_role('button', name='記一筆').click()
     dlg = pg.get_by_role('dialog')
     dlg.get_by_label('金額').fill('1200')
+    expect(dlg.locator('.form.editor')).not_to_contain_text('null')
+    last = dlg.get_by_role('button', name='📦 其他')
+    box = last.bounding_box(); assert box and box['x'] + box['width'] <= 390, '分類要多排顯示，不需橫移'
     dlg.get_by_placeholder('項目名稱，例如：晚餐').fill('居酒屋')
     pg.wait_for_timeout(300); shot('04-editor')
     dlg.get_by_role('button', name='記下這筆').click()
@@ -43,6 +52,10 @@ with sync_playwright() as p:
     dlg.get_by_label('小安 金額').fill('2000'); dlg.get_by_label('阿哲 金額').fill('1000')
     expect(dlg.get_by_label('米米 參與分攤')).to_be_checked()  # 自訂金額預設全員勾選
     dlg.get_by_label('阿哲 金額').fill('')
+    expect(dlg.get_by_role('button', name='所有人平均')).to_have_attribute('aria-pressed', 'true')  # 預設：所有人平均
+    expect(dlg.get_by_text('不足 ¥1,000 由勾選的 4 人平均分攤', exact=False)).to_be_visible()
+    shot('05b-fill-all')
+    dlg.get_by_role('button', name='沒填的人平均').click()
     expect(dlg.get_by_text('剩下 ¥1,000 由 3 位沒填金額的人平分', exact=False)).to_be_visible()  # 小安填 2000，其餘 3 人平分剩下
     shot('05a-amount-remainder')
     dlg.get_by_label('阿哲 金額').fill('1000')
@@ -66,6 +79,9 @@ with sync_playwright() as p:
     dlg.get_by_label('金額').fill('1000'); dlg.get_by_placeholder('項目名稱，例如：晚餐').fill('烤肉')
     dlg.get_by_role('button', name='自訂金額').click()
     dlg.get_by_label('小安 金額').fill('400')
+    expect(dlg.locator('.split-sum')).to_contain_text('不足 NT$600 由勾選的 4 人平均分攤')
+    expect(dlg.locator('.split-pv[data-id=m0]')).to_have_text('NT$550')  # 400 + 150
+    dlg.get_by_role('button', name='沒填的人平均').click()
     expect(dlg.locator('.split-sum')).to_contain_text('剩下 NT$600 由 3 位')
     expect(dlg.locator('.split-pv[data-id=m1]')).to_have_text('NT$200')
     expect(dlg.get_by_label('阿哲 金額')).to_have_attribute('placeholder', '平分')

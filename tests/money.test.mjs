@@ -100,3 +100,23 @@ test('自訂金額：沒填金額的人平分剩下的', () => {
   // 填 0 的人不分攤
   assert.equal(amountSplit({ A: 0, B: '' }, 100, 'TWD').weights.A, 0);
 });
+
+test('自訂金額不足額：所有人平均（fill: all）', async () => {
+  const { recordShares: rs, validateRecord: vr } = await import('../web/js/money.js');
+  const rec = { type: 'expense', currency: 'TWD', rate: 1, amount: 1000, payerId: 'a', date: '2026-01-01', split: { mode: 'amount', fill: 'all', parts: { a: 400, b: 200, c: '' } } };
+  // 已填 600，差 400 由 a、b、c 三人平均 → a 533/534、b 333/334、c 133/134，總和 1000
+  const { shares } = rs(rec, 'TWD');
+  assert.equal(shares.a + shares.b + shares.c, 1000);
+  assert.ok(Math.abs(shares.a - 533.33) < 1 && Math.abs(shares.b - 333.33) < 1 && Math.abs(shares.c - 133.33) < 1);
+  assert.deepEqual(vr(rec), []);
+  // 全部都有填、仍不足：all 模式允許（大家平均補），blank 模式報錯
+  const full = { ...rec, split: { mode: 'amount', fill: 'all', parts: { a: 300, b: 300 } } };
+  assert.deepEqual(vr(full), []);
+  assert.deepEqual(rs(full, 'TWD').shares, { a: 500, b: 500 });
+  assert.ok(vr({ ...full, split: { ...full.split, fill: 'blank' } }).length);
+  // 超出仍然報錯
+  assert.ok(vr({ ...rec, split: { mode: 'amount', fill: 'all', parts: { a: 900, b: 200 } } }).length);
+  // 舊紀錄沒有 fill → 沿用「沒填的人平分」
+  const legacy = { ...rec, split: { mode: 'amount', parts: { a: 400, b: 200, c: '' } } };
+  assert.deepEqual(rs(legacy, 'TWD').shares, { a: 400, b: 200, c: 400 });
+});
