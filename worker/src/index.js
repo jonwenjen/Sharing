@@ -9,7 +9,7 @@ const id16 = () => crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 const now = () => Date.now();
 
 // ---------- HTTP 工具 ----------
-class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
+class HttpError extends Error { constructor(status, msg, code) { super(msg); this.status = status; this.code = code; } }
 function cors(env, req) {
   const origin = req.headers.get('Origin') || '';
   const allowed = (env.ALLOWED_ORIGINS || '*').split(',').map((s) => s.trim());
@@ -43,7 +43,7 @@ export async function authenticate(req, env) {
 }
 
 // ---------- 資料列轉換 ----------
-const ledgerOut = (r) => r && ({ id: r.id, name: r.name, baseCurrency: r.base_currency, groupId: r.group_id, createdBy: r.created_by, fundEnabled: r.fund_enabled, fundCustodian: r.fund_custodian, shareDefault: r.share_default, archived: r.archived, fixedRates: JSON.parse(r.fixed_rates || '{}'), createdAt: r.created_at, updatedAt: r.updated_at });
+const ledgerOut = (r) => r && ({ id: r.id, name: r.name, baseCurrency: r.base_currency, groupId: r.group_id, createdBy: r.created_by, fundEnabled: r.fund_enabled, fundCustodian: r.fund_custodian, shareDefault: r.share_default, archived: r.archived, fixedRates: JSON.parse(r.fixed_rates || '{}'), inviteCode: r.invite_code || null, groupName: r.group_name || null, creatorName: r.creator_name || null, createdAt: r.created_at, updatedAt: r.updated_at });
 const memberOut = (r) => r && ({ id: r.id, ledgerId: r.ledger_id, name: r.name, lineUserId: r.line_user_id, avatar: r.avatar || '', payInfo: JSON.parse(r.pay_info || '{}'), active: r.active });
 const recordOut = (r) => r && ({ id: r.id, ledgerId: r.ledger_id, type: r.type, title: r.title, category: r.category, amount: r.amount, currency: r.currency, rate: r.rate, payerId: r.payer_id, split: JSON.parse(r.split), date: r.date, note: r.note || '', createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at });
 
@@ -172,6 +172,10 @@ export async function handleWebhook(req, env) {
       const src = ev.source || {};
       const gid = src.groupId || src.roomId || null;
       const q = gid ? `?g=${encodeURIComponent(gid)}` : '';
+      if (ev.type === 'join' && gid) {
+        const n = await groupName(env, gid);
+        if (n) await env.DB.prepare('UPDATE ledgers SET group_name = ? WHERE group_id = ?').bind(n, gid).run();
+      }
       if (ev.type === 'join') {
         await replyOpen(env, ev.replyToken, '大家好！我是 Sharing 記帳小幫手。點下面按鈕建立帳本，之後輸入「記帳」或「結算」都可以叫我。', '開始記帳', q);
       } else if (ev.type === 'message' && ev.message.type === 'text') {
@@ -309,6 +313,66 @@ export async function settleSummary(env, ledgerId) {
   return [`【${ledger.name}】最少 ${tx.length} 筆轉帳即可結清：`, ...tx.map((t) => `・${name(t.from)} → ${name(t.to)}　${formatMinor(t.amount, ledger.baseCurrency)}`)].join('\n');
 }
 
+// ---------- 權限控管 ----------
+// 可進入帳本的人：建立者、已綁定成員、曾用有效邀請連結加入者、所連結 LINE 群組的成員
+const newInviteCode = () => crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+const safeEq = (a, b) => { a = String(a || ''); b = String(b || ''); let d = a.length ^ b.length; for (let i = 0; i < Math.min(a.length, b.length); i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0 && a.length > 0; };
+const gmCache = new Map();
+export async function isGroupMember(env, gid, sub) {
+  if (!gid || !sub || !env.LINE_CHANNEL_ACCESS_TOKEN) return false;
+  const k = `${gid}|${sub}`;
+  const c = gmCache.get(k);
+  if (c && c.exp > now()) return c.ok;
+  let ok = false;
+  try {
+    const kind = gid.startsWith('R') ? 'room' : 'group';
+    const res = await fetch(`https://api.line.me/v2/bot/${kind}/${encodeURIComponent(gid)}/member/${encodeURIComponent(sub)}`, { headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` } });
+    ok = res.ok;
+  } catch { ok = false; }
+  if (gmCache.size > 2000) gmCache.clear();
+  gmCache.set(k, { ok, exp: now() + (ok ? 10 : 1) * 60e3 });
+  return ok;
+}
+const grant = (env, lid, sub, via) => env.DB.prepare('INSERT OR IGNORE INTO ledger_access (ledger_id, user_id, via, created_at) VALUES (?,?,?,?)').bind(lid, sub, via, now()).run();
+export const isAdmin = (env, sub) => String(env.ADMIN_USER_IDS || '').split(',').map((x) => x.trim()).filter(Boolean).includes(sub);
+async function groupName(env, gid) {
+  if (!gid || !env.LINE_CHANNEL_ACCESS_TOKEN) return null;
+  try {
+    const kind = gid.startsWith('R') ? null : 'group';
+    if (!kind) return '多人聊天室';
+    const res = await fetch(`https://api.line.me/v2/bot/group/${encodeURIComponent(gid)}/summary`, { headers: { Authorization: `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}` } });
+    return res.ok ? (await res.json()).groupName || null : null;
+  } catch { return null; }
+}
+/** 補齊列表需要的群組名稱（存回資料庫，只查一次）與建立者名稱 */
+async function decorate(env, rows) {
+  for (const r of rows) {
+    if (r.group_id && !r.group_name) {
+      const n = await groupName(env, r.group_id);
+      if (n) { r.group_name = n; await env.DB.prepare('UPDATE ledgers SET group_name = ? WHERE id = ?').bind(n, r.id).run(); }
+    }
+    if (!r.creator_name && r.created_by) {
+      const m = await env.DB.prepare('SELECT name FROM members WHERE ledger_id = ? AND line_user_id = ?').bind(r.id, r.created_by).first();
+      r.creator_name = m ? m.name : null;
+    }
+  }
+  return rows;
+}
+export async function ensureAccess(env, l, user, join) {
+  if (l.created_by === user.sub || isAdmin(env, user.sub)) return;
+  const hit = await env.DB.prepare('SELECT 1 AS ok FROM members WHERE ledger_id = ?1 AND line_user_id = ?2 UNION SELECT 1 FROM ledger_access WHERE ledger_id = ?1 AND user_id = ?2 LIMIT 1').bind(l.id, user.sub).first();
+  if (hit) return;
+  if (join && safeEq(join, l.invite_code)) return grant(env, l.id, user.sub, 'invite');
+  if (l.group_id && (await isGroupMember(env, l.group_id, user.sub))) return grant(env, l.id, user.sub, 'group');
+  throw new HttpError(403, join ? '邀請連結已失效，請向帳本成員索取新的連結' : '你沒有這本帳本的權限，請向帳本成員索取邀請連結', 'NO_ACCESS');
+}
+async function withInvite(env, l) {
+  if (l.invite_code) return l;
+  const code = newInviteCode();
+  await env.DB.prepare('UPDATE ledgers SET invite_code = ? WHERE id = ? AND invite_code IS NULL').bind(code, l.id).run();
+  return getLedgerRow(env, l.id);
+}
+
 // ---------- API 路由 ----------
 async function api(req, env, url) {
   const p = url.pathname.replace(/\/+$/, '');
@@ -319,17 +383,26 @@ async function api(req, env, url) {
   if (p === '/api/rates' && m === 'GET') return rates(env, url.searchParams.get('base') || 'TWD', url.searchParams.get('date'));
   const user = await authenticate(req, env);
 
+  if (p === '/api/me' && m === 'GET') return { userId: user.sub, name: user.name, isAdmin: isAdmin(env, user.sub) };
   if (p === '/api/me/ledgers' && m === 'GET') {
-    const { results } = await env.DB.prepare(`
+    const admin = isAdmin(env, user.sub);
+    const { results } = await env.DB.prepare(admin ? `
+      SELECT l.*, (SELECT COUNT(*) FROM members x WHERE x.ledger_id = l.id AND x.active = 1) AS member_count,
+             (SELECT id FROM members y WHERE y.ledger_id = l.id AND y.line_user_id = ?1) AS my_member_id,
+             (l.created_by = ?1 OR EXISTS (SELECT 1 FROM members z WHERE z.ledger_id = l.id AND z.line_user_id = ?1) OR EXISTS (SELECT 1 FROM ledger_access a WHERE a.ledger_id = l.id AND a.user_id = ?1)) AS has_access
+      FROM ledgers l WHERE l.deleted = 0 ORDER BY l.archived, l.updated_at DESC` : `
       SELECT l.*, (SELECT COUNT(*) FROM members x WHERE x.ledger_id = l.id AND x.active = 1) AS member_count,
              (SELECT id FROM members y WHERE y.ledger_id = l.id AND y.line_user_id = ?1) AS my_member_id
-      FROM ledgers l WHERE l.deleted = 0 AND (l.created_by = ?1 OR EXISTS (SELECT 1 FROM members z WHERE z.ledger_id = l.id AND z.line_user_id = ?1))
+      FROM ledgers l WHERE l.deleted = 0 AND (l.created_by = ?1 OR EXISTS (SELECT 1 FROM members z WHERE z.ledger_id = l.id AND z.line_user_id = ?1) OR EXISTS (SELECT 1 FROM ledger_access a WHERE a.ledger_id = l.id AND a.user_id = ?1))
       ORDER BY l.archived, l.updated_at DESC`).bind(user.sub).all();
-    return results.map((r) => ({ ...ledgerOut(r), memberCount: r.member_count, myMemberId: r.my_member_id }));
+    await decorate(env, results);
+    return results.map((r) => ({ ...ledgerOut(r), memberCount: r.member_count, myMemberId: r.my_member_id, isCreator: r.created_by === user.sub, viaAdmin: admin && !r.has_access }));
   }
   if (seg[0] === 'groups' && seg[2] === 'ledgers' && m === 'GET') {
+    if (!(await isGroupMember(env, decodeURIComponent(seg[1]), user.sub))) return [];
     const { results } = await env.DB.prepare(`SELECT l.*, (SELECT COUNT(*) FROM members x WHERE x.ledger_id = l.id AND x.active = 1) AS member_count FROM ledgers l WHERE l.group_id = ? AND l.deleted = 0 ORDER BY l.archived, l.updated_at DESC`).bind(decodeURIComponent(seg[1])).all();
-    return results.map((r) => ({ ...ledgerOut(r), memberCount: r.member_count }));
+    await decorate(env, results);
+    return results.map((r) => ({ ...ledgerOut(r), memberCount: r.member_count, isCreator: r.created_by === user.sub }));
   }
   if (p === '/api/ledgers' && m === 'POST') {
     const name = String(body.name || '').trim().slice(0, 40);
@@ -337,7 +410,9 @@ async function api(req, env, url) {
     const cur = CURRENCIES[body.baseCurrency] ? body.baseCurrency : 'TWD';
     const lid = id16(); const t = now();
     const names = [...new Set((body.members || []).map((s) => String(s).trim().slice(0, 20)).filter(Boolean))].slice(0, 50);
-    const stmts = [env.DB.prepare('INSERT INTO ledgers (id,name,base_currency,group_id,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').bind(lid, name, cur, body.groupId || null, user.sub, t, t)];
+    const gid = body.groupId && (await isGroupMember(env, body.groupId, user.sub)) ? body.groupId : null;
+    const gname = gid ? await groupName(env, gid) : null;
+    const stmts = [env.DB.prepare('INSERT INTO ledgers (id,name,base_currency,group_id,group_name,created_by,creator_name,invite_code,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)').bind(lid, name, cur, gid, gname, user.sub, user.name || null, newInviteCode(), t, t)];
     names.forEach((n, i) => {
       const claim = i === 0 && body.claimFirst;
       stmts.push(env.DB.prepare('INSERT INTO members (id,ledger_id,name,line_user_id,avatar,created_at) VALUES (?,?,?,?,?,?)').bind(id16(), lid, n, claim ? user.sub : null, claim ? user.picture : '', t + i));
@@ -347,7 +422,22 @@ async function api(req, env, url) {
   }
   if (seg[0] === 'ledgers' && seg[1]) {
     const lid = seg[1];
-    if (seg.length === 2 && m === 'GET') return loadLedger(env, lid);
+    const lrow = await getLedgerRow(env, lid);
+    await ensureAccess(env, lrow, user, m === 'GET' && seg.length === 2 ? url.searchParams.get('join') : null);
+    if (seg.length === 2 && m === 'GET') {
+      await withInvite(env, lrow);
+      const data = await loadLedger(env, lid);
+      const [row] = await decorate(env, [await getLedgerRow(env, lid)]);
+      data.ledger = ledgerOut(row);
+      data.viewer = { isAdmin: isAdmin(env, user.sub), isCreator: row.created_by === user.sub };
+      return data;
+    }
+    if (seg[2] === 'invite' && seg[3] === 'reset' && m === 'POST') {
+      const isMember = lrow.created_by === user.sub || (await env.DB.prepare('SELECT 1 FROM members WHERE ledger_id = ? AND line_user_id = ?').bind(lid, user.sub).first());
+      if (!isMember) throw new HttpError(403, '只有帳本成員可以重設邀請連結');
+      await env.DB.prepare('UPDATE ledgers SET invite_code = ?, updated_at = ? WHERE id = ?').bind(newInviteCode(), now(), lid).run();
+      return ledgerOut(await getLedgerRow(env, lid));
+    }
     if (seg.length === 2 && m === 'PATCH') {
       const l = await getLedgerRow(env, lid);
       const f = {};
@@ -402,7 +492,7 @@ async function api(req, env, url) {
   if (seg[0] === 'members' && seg[1]) {
     const mem = await env.DB.prepare('SELECT * FROM members WHERE id = ?').bind(seg[1]).first();
     if (!mem) throw new HttpError(404, '找不到這位成員');
-    await getLedgerRow(env, mem.ledger_id);
+    await ensureAccess(env, await getLedgerRow(env, mem.ledger_id), user);
     if (seg.length === 2 && m === 'PATCH') {
       const f = {};
       if (body.name != null) f.name = String(body.name).trim().slice(0, 20) || mem.name;
@@ -437,6 +527,7 @@ async function api(req, env, url) {
   if (seg[0] === 'records' && seg[1]) {
     const rec = await env.DB.prepare('SELECT * FROM records WHERE id = ? AND deleted = 0').bind(seg[1]).first();
     if (!rec) throw new HttpError(404, '找不到這筆紀錄');
+    await ensureAccess(env, await getLedgerRow(env, rec.ledger_id), user);
     if (m === 'PATCH') {
       const { r, l } = await cleanRecord(env, rec.ledger_id, { ...recordOut(rec), ...body });
       assertWritable(l);
@@ -465,14 +556,21 @@ const touch = (env, lid) => env.DB.prepare('UPDATE ledgers SET updated_at = ? WH
 
 // 自動補齊舊版資料庫缺少的欄位（每個執行個體只檢查一次，免手動 migrate）
 let schemaChecked = false;
+const MIGRATIONS = [
+  ['fixed_rates', "ALTER TABLE ledgers ADD COLUMN fixed_rates TEXT DEFAULT '{}'"],
+  ['invite_code', 'ALTER TABLE ledgers ADD COLUMN invite_code TEXT'],
+  ['group_name', 'ALTER TABLE ledgers ADD COLUMN group_name TEXT'],
+  ['creator_name', 'ALTER TABLE ledgers ADD COLUMN creator_name TEXT'],
+];
 export async function ensureSchema(env) {
   if (schemaChecked || !env.DB) return;
-  try { await env.DB.prepare('SELECT fixed_rates FROM ledgers LIMIT 1').first(); }
-  catch {
-    try { await env.DB.prepare("ALTER TABLE ledgers ADD COLUMN fixed_rates TEXT DEFAULT '{}'").run(); console.log('[schema] 已新增 ledgers.fixed_rates'); }
-    catch (e) { console.error('[schema] 無法新增欄位', e); return; }
-  }
-  schemaChecked = true;
+  try {
+    const { results } = await env.DB.prepare('PRAGMA table_info(ledgers)').all();
+    const cols = new Set(results.map((c) => c.name));
+    for (const [col, sql] of MIGRATIONS) if (!cols.has(col)) { await env.DB.prepare(sql).run(); console.log(`[schema] 已新增 ledgers.${col}`); }
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS ledger_access (ledger_id TEXT NOT NULL, user_id TEXT NOT NULL, via TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (ledger_id, user_id))').run();
+    schemaChecked = true;
+  } catch (e) { console.error('[schema] 自動更新失敗', e); }
 }
 
 export default {
@@ -489,7 +587,7 @@ export default {
       return json({ error: `找不到路徑 ${url.pathname}（前端 API_BASE 應只填 ${url.origin}）` }, 404, h);
     } catch (e) {
       if (!(e instanceof HttpError)) console.error(e);
-      return json({ error: e instanceof HttpError ? e.message : '伺服器錯誤' }, e.status || 500, h);
+      return json({ error: e instanceof HttpError ? e.message : '伺服器錯誤', code: e.code || undefined }, e.status || 500, h);
     }
   },
 };
