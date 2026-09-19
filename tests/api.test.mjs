@@ -99,9 +99,10 @@ test('封存後不能新增、刪除會軟刪除', async () => {
 test('群組帳本列表與推播通知', async () => {
   const g = await call('mimi', 'GET', '/api/groups/Cgroup1/ledgers');
   assert.equal(g.data[0].id, L);
-  const n = await call('robin', 'POST', `/api/ledgers/${L}/notify`, { messages: [{ type: 'text', text: 'hi' }] });
+  const n = await call('robin', 'POST', `/api/ledgers/${L}/notify`, { kind: 'settle' });
   assert.equal(n.data.ok, true);
   assert.equal(sent.at(-1).body.to, 'Cgroup1');
+  assert.match(sent.at(-1).body.messages[0].text, /轉帳|結清/);
 });
 
 test('匯率 API 換算成「1 外幣 = ? 基準幣」', async () => {
@@ -323,14 +324,55 @@ test('匯款資訊記在個人：同步到所有帳本、新帳本自動帶入',
 test('連結 LINE 群組：只有群組成員能連結，通知只會推播到連結的群組', async () => {
   const nl = await call('robin', 'POST', '/api/ledgers', { name: '未連結', members: ['Robin'], claimFirst: true });
   assert.equal(nl.data.groupId, null);
-  assert.equal((await call('robin', 'POST', `/api/ledgers/${nl.data.id}/notify`, { messages: [{ type: 'text', text: 'x' }] })).status, 400);
+  assert.equal((await call('robin', 'POST', `/api/ledgers/${nl.data.id}/notify`, { kind: 'settle' })).status, 400);
   // eve 不在群組 → 不能連；robin 在群組 → 可以
   await call('eve', 'GET', `/api/ledgers/${nl.data.id}?join=${nl.data.inviteCode}`);
   assert.equal((await call('eve', 'PATCH', `/api/ledgers/${nl.data.id}`, { groupId: 'Cgroup1' })).status, 403);
   const ok = await call('robin', 'PATCH', `/api/ledgers/${nl.data.id}`, { groupId: 'Cgroup1' });
   assert.equal(ok.data.groupId, 'Cgroup1');
   assert.equal(ok.data.groupName, '東京旅遊團');
-  await call('robin', 'POST', `/api/ledgers/${nl.data.id}/notify`, { messages: [{ type: 'text', text: 'hello' }] });
+  await call('robin', 'POST', `/api/ledgers/${nl.data.id}/notify`, { kind: 'settle' });
   assert.equal(sent.at(-1).body.to, 'Cgroup1');
   assert.match(sent.at(-1).url, /\/push$/);
+});
+
+test('推播只能由已綁定成員觸發，內容由後端產生，不接受任意訊息', async () => {
+  const g = await call('robin', 'GET', `/api/ledgers/${L}`);
+  const me = g.data.members.find((m) => m.lineUserId === 'robin');
+  const rec = (await call('robin', 'POST', `/api/ledgers/${L}/records`, { type: 'expense', title: '推播測試', amount: 300, currency: 'TWD', payerId: me.id, split: { mode: 'equal', parts: { [me.id]: true } }, date: '2026-12-05' })).data;
+  const before = sent.length;
+  // 任意訊息內容一律拒絕
+  assert.equal((await call('robin', 'POST', `/api/ledgers/${L}/notify`, { messages: [{ type: 'text', text: '廣告！' }] })).status, 400);
+  // 用邀請連結進來、還沒綁定身分的人不能推播
+  const inv = await call('robin', 'GET', `/api/ledgers/${L}`);
+  await call('stranger2', 'GET', `/api/ledgers/${L}?join=${inv.data.ledger.inviteCode}`);
+  assert.equal((await call('stranger2', 'POST', `/api/ledgers/${L}/notify`, { kind: 'record', action: 'create', recordId: rec.id })).status, 403);
+  // 別本帳本的紀錄 id 不行
+  assert.equal((await call('robin', 'POST', `/api/ledgers/${L}/notify`, { kind: 'record', action: 'create', recordId: 'nope' })).status, 404);
+  // 狀態不符（未刪除卻說刪除）不行
+  assert.equal((await call('robin', 'POST', `/api/ledgers/${L}/notify`, { kind: 'record', action: 'delete', recordId: rec.id })).status, 400);
+  assert.equal(sent.length, before, '以上都不應送出任何訊息');
+  // 正常：成員通知新增
+  const ok = await call('robin', 'POST', `/api/ledgers/${L}/notify`, { kind: 'record', action: 'create', recordId: rec.id });
+  assert.equal(ok.data.ok, true);
+  assert.equal(sent.at(-1).body.messages[0].type, 'flex');
+  assert.match(sent.at(-1).body.messages[0].altText, /推播測試/);
+  // 刪除後通知刪除
+  await call('robin', 'DELETE', `/api/records/${rec.id}`);
+  assert.equal((await call('robin', 'POST', `/api/ledgers/${L}/notify`, { kind: 'record', action: 'delete', recordId: rec.id })).status, 200);
+  // 結算可指定顯示幣別
+  await call('robin', 'POST', `/api/ledgers/${L}/notify`, { kind: 'settle', currency: 'JPY' });
+  assert.match(sent.at(-1).body.messages[0].text, /¥|結清/);
+});
+
+test('群組身分不會永久保留：退出群組後就不能再進帳本', async () => {
+  const { _resetGroupCache } = await import('../worker/src/index.js');
+  GROUP.add('temp');
+  _resetGroupCache();
+  assert.equal((await call('temp', 'GET', `/api/ledgers/${L}`)).status, 200);
+  GROUP.delete('temp');
+  _resetGroupCache();
+  assert.equal((await call('temp', 'GET', `/api/ledgers/${L}`)).status, 403);
+  const acc = await env.DB.prepare("SELECT COUNT(*) AS n FROM ledger_access WHERE user_id = 'temp'").first();
+  assert.equal(acc.n, 0);
 });
