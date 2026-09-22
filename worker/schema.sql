@@ -68,3 +68,13 @@ CREATE TABLE IF NOT EXISTS user_profiles (
   pay_info TEXT DEFAULT '{}',
   updated_at INTEGER
 );
+
+-- 爬梯子紀錄（後端產生亂數，分享到群組時內容可信）
+CREATE TABLE IF NOT EXISTS ladders (
+  id TEXT PRIMARY KEY,
+  ledger_id TEXT NOT NULL,
+  created_by TEXT,
+  data TEXT NOT NULL,
+  shared INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
