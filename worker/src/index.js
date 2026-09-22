@@ -3,6 +3,7 @@
 import { settlementBalances, CURRENCIES, validateRecord, formatMinor, formatMoney, fromMinor, decimalsOf, guessCategory, categoryOf } from '../../web/js/money.js';
 import { parseQuickEntry, QUICK_HELP } from '../../web/js/parse.js';
 import { recordFlex, settleText } from '../../web/js/messages.js';
+import { runLadder, ladderText, LADDER_MODES } from '../../web/js/ladder.js';
 import { minTransfers } from '../../web/js/settle.js';
 
 const id16 = () => crypto.randomUUID().replace(/-/g, '').slice(0, 16);
@@ -561,6 +562,18 @@ async function api(req, env, url) {
       assertWritable(l);
       return insertRecord(env, lid, r, user.sub);
     }
+    if (seg[2] === 'ladder' && m === 'POST') {
+      // 爬梯子：由後端產生亂數，結果存起來，之後分享到群組時內容可信
+      const { results: ms } = await env.DB.prepare('SELECT id, name FROM members WHERE ledger_id = ? AND active = 1').bind(lid).all();
+      const valid = new Set(ms.map((x) => x.id));
+      const participants = [...new Set((body.participants || []).map(String))].filter((x) => valid.has(x));
+      if (participants.length < 2) throw new HttpError(400, '至少要選 2 位成員');
+      if (!LADDER_MODES[body.mode]) throw new HttpError(400, '不支援的模式');
+      const game = runLadder({ participants, mode: body.mode, count: Number(body.count) || 1 });
+      const id = id16();
+      await env.DB.prepare('INSERT INTO ladders (id, ledger_id, created_by, data, created_at) VALUES (?,?,?,?,?)').bind(id, lid, user.sub, JSON.stringify(game), now()).run();
+      return { id, ...game };
+    }
     if (seg[2] === 'notify' && m === 'POST') {
       // 只有已綁定的成員（或建立者）能讓機器人傳訊；訊息內容一律由後端依資料產生，不接受任意文字
       const l = await getLedgerRow(env, lid);
@@ -607,6 +620,21 @@ async function api(req, env, url) {
       await env.DB.prepare('UPDATE ledgers SET fund_custodian = NULL WHERE id = ? AND fund_custodian = ?').bind(mem.ledger_id, mem.id).run();
       return { removed: true };
     }
+  }
+  if (seg[0] === 'ladders' && seg[1] && seg[2] === 'share' && m === 'POST') {
+    const row = await env.DB.prepare('SELECT * FROM ladders WHERE id = ?').bind(seg[1]).first();
+    if (!row) throw new HttpError(404, '找不到這次爬梯子');
+    const l = await getLedgerRow(env, row.ledger_id);
+    await ensureAccess(env, l, user);
+    if (!l.group_id) throw new HttpError(400, '這本帳本沒有連結 LINE 群組');
+    const bound = l.created_by === user.sub || (await env.DB.prepare('SELECT 1 FROM members WHERE ledger_id = ? AND line_user_id = ? AND active = 1').bind(l.id, user.sub).first());
+    if (!bound) throw new HttpError(403, '只有帳本成員可以傳訊息到群組，請先選擇你的身分');
+    if (row.shared) throw new HttpError(409, '這次結果已經分享過了');
+    const { results: ms } = await env.DB.prepare('SELECT id, name FROM members WHERE ledger_id = ?').bind(l.id).all();
+    const nameOf = (id) => (ms.find((x) => x.id === id) || {}).name || '？';
+    const ok = await lineApi(env, 'push', { to: l.group_id, messages: [{ type: 'text', text: ladderText(JSON.parse(row.data), nameOf, l.name) }] });
+    if (ok) await env.DB.prepare('UPDATE ladders SET shared = 1 WHERE id = ?').bind(row.id).run();
+    return { ok };
   }
   if (seg[0] === 'records' && seg[1] && seg[2] === 'restore' && m === 'POST') {
     // 復原刪除（軟刪除 → 取回）
@@ -665,7 +693,8 @@ export async function ensureSchema(env) {
     for (const [col, sql] of MIGRATIONS) if (!cols.has(col)) { await env.DB.prepare(sql).run(); console.log(`[schema] 已新增 ledgers.${col}`); }
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS user_profiles (user_id TEXT PRIMARY KEY, pay_info TEXT DEFAULT '{}', updated_at INTEGER)").run();
     await env.DB.prepare('CREATE TABLE IF NOT EXISTS ledger_access (ledger_id TEXT NOT NULL, user_id TEXT NOT NULL, via TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (ledger_id, user_id))').run();
-    await env.DB.prepare("DELETE FROM ledger_access WHERE via = 'group'").run(); // 舊版會永久記錄群組身分，清掉
+    await env.DB.prepare("DELETE FROM ledger_access WHERE via = 'group'").run();
+    await env.DB.prepare('CREATE TABLE IF NOT EXISTS ladders (id TEXT PRIMARY KEY, ledger_id TEXT NOT NULL, created_by TEXT, data TEXT NOT NULL, shared INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)').run(); // 舊版會永久記錄群組身分，清掉
     await env.DB.prepare('CREATE TABLE IF NOT EXISTS ledger_access (ledger_id TEXT NOT NULL, user_id TEXT NOT NULL, via TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (ledger_id, user_id))').run();
     schemaChecked = true;
   } catch (e) { console.error('[schema] 自動更新失敗', e); }
