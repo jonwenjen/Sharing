@@ -2,6 +2,7 @@
 import { CONFIG } from './config.js';
 import { line } from './line.js';
 import { settlementBalances } from './money.js';
+import { runLadder } from './ladder.js';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 16);
 const now = () => Date.now();
@@ -41,6 +42,8 @@ const remote = {
   updateRecord: (rid, p) => call('PATCH', `/api/records/${rid}`, p),
   deleteRecord: (rid) => call('DELETE', `/api/records/${rid}`),
   restoreRecord: (rid) => call('POST', `/api/records/${rid}/restore`),
+  ladder: (lid, p) => call('POST', `/api/ledgers/${lid}/ladder`, p),
+  shareLadder: (id) => call('POST', `/api/ladders/${id}/share`),
   rates: (base, date) => call('GET', `/api/rates?base=${base}${date ? `&date=${date}` : ''}`),
   notifyGroup: (lid, payload) => call('POST', `/api/ledgers/${lid}/notify`, payload),
 };
@@ -141,6 +144,8 @@ const demo = {
   addRecord: (lid, r) => mutate((db) => { const x = { ...r, id: uid(), ledgerId: lid, createdBy: me(), createdAt: now(), updatedAt: now() }; db.records.push(x); return x; }),
   updateRecord: (rid, p) => mutate((db) => Object.assign(db.records.find((r) => r.id === rid), p, { updatedAt: now() })),
   deleteRecord: (rid) => mutate((db) => { db.records.find((r) => r.id === rid).deleted = 1; return { ok: true }; }),
+  ladder: (lid, p) => wait({ id: uid(), ...runLadder(p) }),
+  shareLadder: () => wait({ ok: false }),
   restoreRecord: (rid) => mutate((db) => { const r = db.records.find((x) => x.id === rid); r.deleted = 0; return r; }),
   // 示範模式用固定匯率，並依日期做一點小波動，方便看出「當日匯率」效果
   rates: (base, date) => { const j = date ? 1 + ((Number(date.slice(-2)) % 7) - 3) / 300 : 1; return wait({ date: date || new Date().toISOString().slice(0, 10), rates: Object.fromEntries(Object.entries(DEMO_RATES).map(([k, v]) => [k, k === base ? 1 : (v * j) / DEMO_RATES[base]])) }); },

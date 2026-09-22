@@ -7,6 +7,7 @@ import {
   settlementBalances, fundCash, stats, validateRecord,
 } from './money.js';
 import { minTransfers } from './settle.js';
+import { ladderSetup } from './ladderui.js';
 import { recordFlex, inviteFlex, settleText, recordsCsv, summaryCsv, describeRecord } from './messages.js';
 
 const S = { ledger: null, members: [], records: [], meId: null, tab: 'list', rates: {}, scope: 'all', groupId: null, filter: { kind: 'all', cat: null, date: null }, flash: null };
@@ -112,6 +113,24 @@ async function accountSheet() {
       '要設為管理員，請把這個 ID 填入後端 wrangler.toml 的 ADMIN_USER_IDS。')), { tall: true });
 }
 
+// ============ 爬梯子 ============
+function openLadder() {
+  const canShare = !line.demo && S.ledger.groupId && (S.meId || (S.viewer && S.viewer.isCreator));
+  ladderSetup({
+    members: activeMembers(),
+    ledgerName: S.ledger.name,
+    run: (p) => store.ladder(S.ledger.id, p),
+    share: canShare ? async (game) => {
+      try {
+        const r = await store.shareLadder(game.id);
+        if (r && r.ok) { toast(`已傳到「${S.ledger.groupName || 'LINE 群組'}」`); return true; }
+        toast('LINE 拒絕了這則訊息', 'err');
+      } catch (e) { toast(e.message, 'err'); }
+      return false;
+    } : null,
+  });
+}
+
 // ============ 使用說明 ============
 function helpSheet() {
   const sec = (title, items, open = false) => h('details', { open },
@@ -153,6 +172,12 @@ function helpSheet() {
       '<b>成員</b>分頁：分享邀請連結、新增或移除成員（有帳目的成員會改為停用）。',
       '<b>匯款資訊</b>：首頁右上角頭像填一次，所有帳本自動同步，新帳本也會自動帶入。',
       '<b>公費</b>：開啟後指定保管人，用「存入公費」記錄大家交的錢，花費時付款人選「公費」。',
+    ]),
+    sec('爬梯子（右上角梯子圖示）', [
+      '公平的隨機分配：每條路徑一對一，絕對不會重複；亂數由伺服器產生，誰也改不了結果。',
+      '先選參加的人（預設全部），再選模式：<b>命運</b>（選出幾位）、<b>配對</b>（分成幾組）、<b>優先權</b>（排出順序）。',
+      '按「開始」後倒數 3、2、1，所有人同時出發；橫線和終點全程蓋住，路徑走到哪才亮到哪，約 5 秒揭曉。',
+      '結果可以分享到連結的 LINE 群組（每次只能分享一次）、複製，或再來一次。',
     ]),
     sec('帳本設定（右上角齒輪）', [
       '修改名稱、固定匯率、預設是否分享到 LINE。',
@@ -244,6 +269,7 @@ function renderLedger() {
       h('button', { class: 'icon-btn', 'aria-label': '回帳本列表', onclick: home }, icon('back')),
       h('h1', { class: 'top-title' }, S.ledger.name),
       h('div', { class: 'top-actions' },
+        h('button', { class: 'icon-btn', 'aria-label': '爬梯子', onclick: openLadder }, icon('ladder')),
         h('button', { class: 'icon-btn', 'aria-label': '使用說明', onclick: helpSheet }, icon('help')),
         h('button', { class: 'icon-btn', 'aria-label': '帳本設定', onclick: settingsSheet }, icon('gear')))),
     h('main', { class: 'ledger' },
