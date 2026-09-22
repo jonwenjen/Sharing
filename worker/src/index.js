@@ -453,7 +453,18 @@ async function api(req, env, url) {
       FROM ledgers l WHERE l.deleted = 0 AND (l.created_by = ?1 OR EXISTS (SELECT 1 FROM members z WHERE z.ledger_id = l.id AND z.line_user_id = ?1) OR EXISTS (SELECT 1 FROM ledger_access a WHERE a.ledger_id = l.id AND a.user_id = ?1))
       ORDER BY l.archived, l.updated_at DESC`).bind(user.sub).all();
     await decorate(env, results);
-    return results.map((r) => ({ ...ledgerOut(r), memberCount: r.member_count, myMemberId: r.my_member_id, isCreator: r.created_by === user.sub, viaAdmin: admin && !r.has_access }));
+    // 首頁卡片顯示「我的結算淨額」
+    const mine = results.filter((r) => r.my_member_id);
+    const myNet = {};
+    if (mine.length) {
+      const ids = mine.map((r) => r.id);
+      const { results: recs } = await env.DB.prepare(`SELECT * FROM records WHERE deleted = 0 AND ledger_id IN (${ids.map(() => '?').join(',')})`).bind(...ids).all();
+      for (const r of mine) {
+        const { net } = settlementBalances(recs.filter((x) => x.ledger_id === r.id).map(recordOut), r.base_currency, r.fund_enabled ? r.fund_custodian : null);
+        myNet[r.id] = net[r.my_member_id] || 0;
+      }
+    }
+    return results.map((r) => ({ ...ledgerOut(r), memberCount: r.member_count, myMemberId: r.my_member_id, myNet: r.my_member_id ? myNet[r.id] : null, isCreator: r.created_by === user.sub, viaAdmin: admin && !r.has_access }));
   }
   if (seg[0] === 'groups' && seg[2] === 'ledgers' && m === 'GET') {
     if (!(await isGroupMember(env, decodeURIComponent(seg[1]), user.sub))) return [];
@@ -596,6 +607,17 @@ async function api(req, env, url) {
       await env.DB.prepare('UPDATE ledgers SET fund_custodian = NULL WHERE id = ? AND fund_custodian = ?').bind(mem.ledger_id, mem.id).run();
       return { removed: true };
     }
+  }
+  if (seg[0] === 'records' && seg[1] && seg[2] === 'restore' && m === 'POST') {
+    // 復原刪除（軟刪除 → 取回）
+    const rec = await env.DB.prepare('SELECT * FROM records WHERE id = ? AND deleted = 1').bind(seg[1]).first();
+    if (!rec) throw new HttpError(404, '找不到可以復原的紀錄');
+    const l = await getLedgerRow(env, rec.ledger_id);
+    await ensureAccess(env, l, user);
+    assertWritable(l);
+    await env.DB.prepare('UPDATE records SET deleted = 0, updated_at = ? WHERE id = ?').bind(now(), rec.id).run();
+    await touch(env, rec.ledger_id);
+    return recordOut(await env.DB.prepare('SELECT * FROM records WHERE id = ?').bind(rec.id).first());
   }
   if (seg[0] === 'records' && seg[1]) {
     const rec = await env.DB.prepare('SELECT * FROM records WHERE id = ? AND deleted = 0').bind(seg[1]).first();
