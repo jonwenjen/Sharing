@@ -25,6 +25,10 @@ with sync_playwright() as p:
     shot('02-identity')
     pg.get_by_role('dialog').get_by_text('小安', exact=True).click()
     expect(pg.get_by_text('你是 小安')).to_be_visible(); pg.wait_for_timeout(300); shot('03-ledger-list')
+    # B1：回首頁看到我的餘額
+    pg.get_by_role('button', name='回帳本列表').click()
+    expect(pg.locator('.ledger-card .lc-bal')).to_contain_text('應付'); shot('01b-home-balance')
+    pg.get_by_text('東京五日遊').click(); expect(pg.get_by_text('你是 小安')).to_be_visible()
     # 新增支出
     pg.get_by_role('button', name='使用說明').click()
     expect(pg.get_by_role('dialog', name='使用說明').get_by_text('在 LINE 直接打字記帳')).to_be_visible()
@@ -63,6 +67,9 @@ with sync_playwright() as p:
     expect(dlg.get_by_text('金額剛好分配完畢')).to_be_visible()
     expect(dlg.locator('.rate-src')).to_contain_text('當日匯率')
     r1 = dlg.get_by_label('匯率').input_value()
+    expect(dlg.locator('details.more')).not_to_have_attribute('open', '')  # A3：更多選項預設收合
+    expect(dlg.locator('details.more summary')).to_contain_text('今天')
+    dlg.get_by_text('更多選項').click()
     dlg.locator('input[type=date]').fill('2026-12-06'); dlg.locator('input[type=date]').dispatch_event('change')
     pg.wait_for_timeout(300)
     assert dlg.get_by_label('匯率').input_value() != r1, '換日期要換匯率'
@@ -99,7 +106,24 @@ with sync_playwright() as p:
     pg.get_by_text('居酒屋').click()
     pg.get_by_role('button', name='刪除這筆').click()
     pg.get_by_role('button', name='刪除', exact=True).click()
-    expect(pg.get_by_text('居酒屋')).to_have_count(0)
+    expect(pg.locator('.rec', has_text='居酒屋')).to_have_count(0)
+    # A4：刪除後可復原
+    expect(pg.locator('.toast .toast-act')).to_have_text('復原'); shot('18-undo')
+    pg.locator('.toast .toast-act').click()
+    expect(pg.locator('.rec', has_text='居酒屋')).to_be_visible()
+    expect(pg.locator('.rec.flash')).to_have_count(1)  # C3：復原的那筆會亮一下
+    pg.locator('.rec', has_text='居酒屋').click()
+    pg.get_by_role('button', name='刪除這筆').click()
+    pg.get_by_role('button', name='刪除', exact=True).click()
+    expect(pg.locator('.rec', has_text='居酒屋')).to_have_count(0)
+    pg.wait_for_timeout(5200)
+    # B4：明細篩選
+    pg.get_by_role('group', name='篩選').get_by_role('button', name='我付的').click()
+    for t in pg.locator('.rec-main small').all_inner_texts(): assert t.startswith('小安'), t
+    pg.get_by_role('group', name='篩選').get_by_role('button', name='🎟️ 門票活動').click()
+    expect(pg.locator('.rec')).to_have_count(1)
+    shot('19-filters')
+    pg.get_by_role('group', name='篩選').get_by_role('button', name='全部').click()
     # 結算
     pg.get_by_role('tab', name='結算').click(); pg.wait_for_timeout(200)
     pg.get_by_label('顯示幣別').select_option('JPY'); pg.wait_for_timeout(300)
@@ -107,6 +131,7 @@ with sync_playwright() as p:
     expect(pg.get_by_text('僅供參考', exact=False)).to_be_visible()
     shot('06-settle')
     pg.get_by_label('顯示幣別').select_option('TWD'); pg.wait_for_timeout(200)
+    expect(pg.locator('.tab-body h3.sec-title').first).to_contain_text('我要付的')  # B2：跟我有關的在最上面
     n_before = pg.locator('.xfer').count()
     pg.locator('.xfer').first.get_by_role('button', name='記為已付款').click()
     pg.get_by_role('dialog').get_by_role('button', name='記為已付款').click()
@@ -120,6 +145,12 @@ with sync_playwright() as p:
     pg.locator('table.cross').scroll_into_view_if_needed(); shot('07c-stats-cross')
     pg.get_by_role('button', name='我的').click(); expect(pg.get_by_text('我分攤的支出')).to_be_visible(); expect(pg.get_by_text('占團體')).to_be_visible()
     pg.get_by_role('button', name='全體').click()
+    # B5：點分類跳到明細並套用篩選
+    pg.get_by_role('button', name='看 住宿 的明細').click()
+    expect(pg.get_by_role('tab', name='明細')).to_have_attribute('aria-selected', 'true')
+    expect(pg.locator('.rec')).to_have_count(1)
+    pg.get_by_role('group', name='篩選').get_by_role('button', name='全部').click()
+    pg.get_by_role('tab', name='統計').click(); pg.wait_for_timeout(200)
     ctx.grant_permissions(['clipboard-read', 'clipboard-write'])
     pg.get_by_role('button', name='複製表格').click()
     assert '\t' in pg.evaluate('navigator.clipboard.readText()'), 'TSV'

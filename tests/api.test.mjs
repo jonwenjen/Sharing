@@ -376,3 +376,19 @@ test('群組身分不會永久保留：退出群組後就不能再進帳本', as
   const acc = await env.DB.prepare("SELECT COUNT(*) AS n FROM ledger_access WHERE user_id = 'temp'").first();
   assert.equal(acc.n, 0);
 });
+
+test('復原刪除與首頁顯示我的淨額', async () => {
+  const g = await call('robin', 'GET', `/api/ledgers/${L}`);
+  const me = g.data.members.find((m) => m.lineUserId === 'robin');
+  const zhe = g.data.members.find((m) => m.lineUserId === 'zhe');
+  const rec = (await call('robin', 'POST', `/api/ledgers/${L}/records`, { type: 'expense', title: '復原測試', amount: 1000, currency: 'TWD', payerId: me.id, split: { mode: 'equal', parts: { [me.id]: true, [zhe.id]: true } }, date: '2026-12-06' })).data;
+  const before = (await call('robin', 'GET', '/api/me/ledgers')).data.find((l) => l.id === L).myNet;
+  await call('robin', 'DELETE', `/api/records/${rec.id}`);
+  const afterDel = (await call('robin', 'GET', '/api/me/ledgers')).data.find((l) => l.id === L).myNet;
+  assert.equal(before - afterDel, 500, 'Robin 代墊 1000、分攤 500 → 刪除後淨額少 500');
+  assert.equal((await call('eve', 'POST', `/api/records/${rec.id}/restore`)).status, 403);
+  const back = await call('robin', 'POST', `/api/records/${rec.id}/restore`);
+  assert.equal(back.status, 200);
+  assert.equal((await call('robin', 'GET', '/api/me/ledgers')).data.find((l) => l.id === L).myNet, before);
+  assert.equal((await call('robin', 'POST', `/api/records/${rec.id}/restore`)).status, 404, '沒被刪除的不能再復原');
+});
