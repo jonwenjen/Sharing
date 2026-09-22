@@ -392,3 +392,19 @@ test('復原刪除與首頁顯示我的淨額', async () => {
   assert.equal((await call('robin', 'GET', '/api/me/ledgers')).data.find((l) => l.id === L).myNet, before);
   assert.equal((await call('robin', 'POST', `/api/records/${rec.id}/restore`)).status, 404, '沒被刪除的不能再復原');
 });
+
+test('爬梯子：後端產生結果、只有成員能分享、同一次只能分享一次', async () => {
+  const g = await call('robin', 'GET', `/api/ledgers/${L}`);
+  const ids = g.data.members.filter((m) => m.active).map((m) => m.id);
+  assert.equal((await call('robin', 'POST', `/api/ledgers/${L}/ladder`, { participants: [ids[0]], mode: 'fate' })).status, 400);
+  assert.equal((await call('robin', 'POST', `/api/ledgers/${L}/ladder`, { participants: ids, mode: 'xx' })).status, 400);
+  const r = await call('robin', 'POST', `/api/ledgers/${L}/ladder`, { participants: [...ids, 'hacker'], mode: 'fate', count: 1 });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.order.length, ids.length, '不屬於帳本的人會被排除');
+  assert.equal(new Set(r.data.ends).size, ids.length);
+  assert.equal((await call('eve2', 'POST', `/api/ladders/${r.data.id}/share`)).status, 403);
+  const ok = await call('robin', 'POST', `/api/ladders/${r.data.id}/share`);
+  assert.equal(ok.data.ok, true);
+  assert.match(sent.at(-1).body.messages[0].text, /爬梯子：命運/);
+  assert.equal((await call('robin', 'POST', `/api/ladders/${r.data.id}/share`)).status, 409);
+});
