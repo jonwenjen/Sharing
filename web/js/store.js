@@ -1,6 +1,7 @@
 // 資料層：遠端（Cloudflare Worker）或示範模式（localStorage），兩者介面相同
 import { CONFIG } from './config.js';
 import { line } from './line.js';
+import { settlementBalances } from './money.js';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 16);
 const now = () => Date.now();
@@ -39,6 +40,7 @@ const remote = {
   addRecord: (lid, r) => call('POST', `/api/ledgers/${lid}/records`, r),
   updateRecord: (rid, p) => call('PATCH', `/api/records/${rid}`, p),
   deleteRecord: (rid) => call('DELETE', `/api/records/${rid}`),
+  restoreRecord: (rid) => call('POST', `/api/records/${rid}/restore`),
   rates: (base, date) => call('GET', `/api/rates?base=${base}${date ? `&date=${date}` : ''}`),
   notifyGroup: (lid, payload) => call('POST', `/api/ledgers/${lid}/notify`, payload),
 };
@@ -81,6 +83,11 @@ const demo = {
     memberCount: db.members.filter((x) => x.ledgerId === l.id && x.active).length,
     myMemberId: (db.members.find((x) => x.ledgerId === l.id && x.lineUserId === me()) || {}).id || null,
     isCreator: l.createdBy === me(),
+    myNet: (() => {
+      const mid = (db.members.find((x) => x.ledgerId === l.id && x.lineUserId === me()) || {}).id;
+      if (!mid) return null;
+      return settlementBalances(db.records.filter((r) => r.ledgerId === l.id && !r.deleted), l.baseCurrency, l.fundEnabled ? l.fundCustodian : null).net[mid] || 0;
+    })(),
   }))),
   groupLedgers: () => wait([]),
   me: () => mutate((db) => ({ userId: me(), name: line.profile.displayName, isAdmin: false, payInfo: (db.profiles || {})[me()] || {} })),
@@ -134,6 +141,7 @@ const demo = {
   addRecord: (lid, r) => mutate((db) => { const x = { ...r, id: uid(), ledgerId: lid, createdBy: me(), createdAt: now(), updatedAt: now() }; db.records.push(x); return x; }),
   updateRecord: (rid, p) => mutate((db) => Object.assign(db.records.find((r) => r.id === rid), p, { updatedAt: now() })),
   deleteRecord: (rid) => mutate((db) => { db.records.find((r) => r.id === rid).deleted = 1; return { ok: true }; }),
+  restoreRecord: (rid) => mutate((db) => { const r = db.records.find((x) => x.id === rid); r.deleted = 0; return r; }),
   // 示範模式用固定匯率，並依日期做一點小波動，方便看出「當日匯率」效果
   rates: (base, date) => { const j = date ? 1 + ((Number(date.slice(-2)) % 7) - 3) / 300 : 1; return wait({ date: date || new Date().toISOString().slice(0, 10), rates: Object.fromEntries(Object.entries(DEMO_RATES).map(([k, v]) => [k, k === base ? 1 : (v * j) / DEMO_RATES[base]])) }); },
   notifyGroup: () => wait({ ok: false }),

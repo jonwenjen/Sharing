@@ -1,7 +1,7 @@
 // Sharing 主程式：帳本列表、帳本（明細／結算／統計／成員）、記帳編輯器
 import { line, initLine, ledgerUrl, pickAndShare, inLineApp, openExternal, webUrl } from './line.js';
 import { store } from './store.js';
-import { h, mount, fitText, icon, avatar, toast, sheet, confirmBox, copyText, download } from './ui.js';
+import { h, mount, fitText, emptyArt, skeleton, icon, avatar, toast, sheet, confirmBox, copyText, download } from './ui.js';
 import {
   CURRENCIES, CATEGORIES, FUND_ID, categoryOf, formatMoney, formatMinor, fromMinor, decimalsOf, recordShares, amountSplit,
   settlementBalances, fundCash, stats, validateRecord,
@@ -9,7 +9,11 @@ import {
 import { minTransfers } from './settle.js';
 import { recordFlex, inviteFlex, settleText, recordsCsv, summaryCsv, describeRecord } from './messages.js';
 
-const S = { ledger: null, members: [], records: [], meId: null, tab: 'list', rates: {}, scope: 'all', groupId: null };
+const S = { ledger: null, members: [], records: [], meId: null, tab: 'list', rates: {}, scope: 'all', groupId: null, filter: { kind: 'all', cat: null, date: null }, flash: null };
+// C4：記住最近開啟的帳本（只存在這支手機）
+const RECENT_KEY = () => `sharing-recent-${line.profile ? line.profile.userId : ''}`;
+const recentMap = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY())) || {}; } catch { return {}; } };
+const touchRecent = (id) => { try { const m = recentMap(); m[id] = Date.now(); localStorage.setItem(RECENT_KEY(), JSON.stringify(m)); } catch { /* 無痕模式 */ } };
 const app = document.getElementById('app');
 const today = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const base = () => S.ledger.baseCurrency;
@@ -50,11 +54,16 @@ async function home() {
         h('span', {}, l.groupId ? `👥 ${l.groupName || 'LINE 群組'}` : '未連結群組'),
         h('span', {}, `建立者 ${l.creatorName || '—'}`),
         h('span', {}, `${l.memberCount ?? '–'} 位成員`))),
+    l.myNet != null ? h('span', { class: `lc-bal ${l.myNet > 0 ? 'pos' : l.myNet < 0 ? 'neg' : ''}` },
+      h('small', {}, l.myNet > 0 ? '應收' : l.myNet < 0 ? '應付' : '已結清'),
+      l.myNet ? h('strong', {}, formatMinor(Math.abs(l.myNet), l.baseCurrency)) : null) : null,
     icon('arrow', 18));
   const groupOnly = groupList.filter((l) => !mine.has(l.id));
   const own = list.filter((l) => !l.viaAdmin);
   const adminOnly = list.filter((l) => l.viaAdmin);
-  const sortA = (arr) => [...arr.filter((l) => !l.archived), ...arr.filter((l) => l.archived)];
+  const recent = recentMap();
+  const byRecent = (a, b) => (recent[b.id] || 0) - (recent[a.id] || 0) || (b.updatedAt || 0) - (a.updatedAt || 0);
+  const sortA = (arr) => [...arr.filter((l) => !l.archived).sort(byRecent), ...arr.filter((l) => l.archived).sort(byRecent)];
   mount(app,
     h('header', { class: 'top home-top' },
       h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, 'S'), 'Sharing'),
@@ -67,7 +76,7 @@ async function home() {
       own.length
         ? h('div', { class: 'stack' }, sortA(own).map(card))
         : adminOnly.length ? h('p', { class: 'hint' }, '你還沒有自己的帳本。')
-          : h('div', { class: 'empty' }, h('p', {}, '還沒有帳本。建立一本，或請朋友傳邀請連結給你。')),
+          : h('div', { class: 'empty' }, emptyArt(), h('p', {}, '還沒有帳本。建立一本，或請朋友傳邀請連結給你。')),
       adminOnly.length ? h('section', {}, h('h3', { class: 'sec-title' }, `其他帳本（管理員可檢視，共 ${adminOnly.length} 本）`), h('div', { class: 'stack' }, sortA(adminOnly).map(card))) : null,
       h('button', { class: 'btn primary block', onclick: createLedgerSheet }, icon('plus', 18), '建立帳本')));
 }
@@ -191,6 +200,10 @@ function createLedgerSheet() {
 async function openLedger(id, { keepScroll = false, join = null } = {}) {
   const y = window.scrollY;
   let data = null;
+  if (!keepScroll) {
+    mount(app, h('header', { class: 'top' }, h('button', { class: 'icon-btn', 'aria-label': '回帳本列表', onclick: home }, icon('back')), h('h1', { class: 'top-title' }, '')), h('main', { class: 'ledger' }, skeleton()));
+    if (!S.ledger || S.ledger.id !== id) S.filter = { kind: 'all', cat: null, date: null };
+  }
   busy(true);
   try { data = await store.getLedger(id, join); }
   catch (e) { busy(false); if (e.code === 'NO_ACCESS') return noAccess(e.message); toast(e.message || '無法開啟帳本', 'err'); return home(); }
@@ -199,6 +212,7 @@ async function openLedger(id, { keepScroll = false, join = null } = {}) {
   Object.assign(S, { ledger: data.ledger, members: data.members, records: data.records, viewer: data.viewer || {} });
   S.meId = (S.members.find((m) => m.lineUserId === line.profile.userId) || {}).id || null;
   setUrl({ l: id });
+  touchRecent(id);
   renderLedger();
   if (keepScroll) window.scrollTo(0, y);
   const adminOnly = S.viewer.isAdmin && !S.meId && !S.viewer.isCreator;
@@ -247,13 +261,33 @@ function renderLedger() {
 
 // ---- 明細 ----
 function listTab() {
-  if (!S.records.length) return h('div', { class: 'empty' }, h('p', {}, '還沒有任何紀錄。'), h('p', { class: 'hint' }, '按右下角「記一筆」，誰先付、幾個人分，一次填好。'));
+  if (!S.records.length) return h('div', { class: 'empty' }, emptyArt(), h('p', {}, '還沒有任何紀錄。'), h('p', { class: 'hint' }, '按右下角「記一筆」，誰先付、幾個人分，一次填好。'));
   const b = base();
-  const sorted = [...S.records].sort((x, y) => (x.date === y.date ? y.createdAt - x.createdAt : x.date < y.date ? 1 : -1));
+  const f = S.filter;
+  const setF = (patch) => { S.filter = { ...f, ...patch }; renderLedger(); };
+  const cats = [...new Set(S.records.filter((r) => r.type === 'expense').map((r) => r.category))];
+  const chip = (label, on, onclick) => h('button', { class: `chip ${on ? 'on' : ''}`, 'aria-pressed': String(!!on), onclick }, label);
+  const bar = h('div', { class: 'chips filters', role: 'group', 'aria-label': '篩選' },
+    chip('全部', f.kind === 'all' && !f.cat && !f.date, () => setF({ kind: 'all', cat: null, date: null })),
+    S.meId ? chip('我付的', f.kind === 'paid', () => setF({ kind: f.kind === 'paid' ? 'all' : 'paid' })) : null,
+    S.meId ? chip('跟我有關', f.kind === 'mine', () => setF({ kind: f.kind === 'mine' ? 'all' : 'mine' })) : null,
+    cats.map((c) => chip(`${categoryOf(c).icon} ${categoryOf(c).name}`, f.cat === c, () => setF({ cat: f.cat === c ? null : c }))),
+    f.date ? chip(`📅 ${Number(f.date.slice(5, 7))}/${Number(f.date.slice(8))} ✕`, true, () => setF({ date: null })) : null);
+  const keep = (r) => {
+    if (f.cat && !(r.type === 'expense' && r.category === f.cat)) return false;
+    if (f.date && r.date !== f.date) return false;
+    if (f.kind === 'paid') return r.payerId === S.meId;
+    if (f.kind === 'mine') return r.payerId === S.meId || !!recordShares(r, b).shares[S.meId];
+    return true;
+  };
+  const list = S.records.filter(keep);
+  if (!list.length) return [bar, h('div', { class: 'empty' }, h('p', {}, '沒有符合篩選的紀錄。'), h('button', { class: 'link', onclick: () => setF({ kind: 'all', cat: null, date: null }) }, '清除篩選'))];
+  const flash = S.flash; S.flash = null;
+  const sorted = [...list].sort((x, y) => (x.date === y.date ? y.createdAt - x.createdAt : x.date < y.date ? 1 : -1));
   const groups = {};
   sorted.forEach((r) => (groups[r.date] = groups[r.date] || []).push(r));
   const wd = '日一二三四五六';
-  return Object.entries(groups).map(([date, rs]) => {
+  return [bar, ...Object.entries(groups).map(([date, rs]) => {
     const d = new Date(date + 'T00:00:00');
     return h('section', { class: 'day' },
       h('h3', { class: 'day-head' }, `${d.getMonth() + 1} 月 ${d.getDate()} 日（${wd[d.getDay()]}）`),
@@ -261,7 +295,7 @@ function listTab() {
         const { total, shares } = recordShares(r, b);
         const effect = S.meId ? (r.payerId === S.meId ? total : 0) - (shares[S.meId] || 0) : 0;
         const glyph = r.type === 'expense' ? categoryOf(r.category).icon : r.type === 'transfer' ? '⇄' : '🏦';
-        return h('li', {}, h('button', { class: 'rec', onclick: () => editor(r) },
+        return h('li', {}, h('button', { class: `rec ${r.id === flash ? 'flash' : ''}`, onclick: () => editor(r) },
           h('span', { class: `rec-ic t-${r.type}` }, glyph),
           h('span', { class: 'rec-main' }, h('strong', {}, r.title || describeRecord(r, S.members)), h('small', {}, describeRecord(r, S.members))),
           h('span', { class: 'rec-amt' },
@@ -269,7 +303,7 @@ function listTab() {
             r.currency !== b ? h('small', {}, `≈ ${formatMinor(total, b)}`) : null,
             effect ? h('small', { class: effect > 0 ? 'pos' : 'neg' }, `你 ${formatMinor(effect, b, { sign: true })}`) : null)));
       })));
-  });
+  })];
 }
 
 // ---- 結算 ----
@@ -285,7 +319,7 @@ function settleTab(net, fundUnassigned) {
   }
   if (fundUnassigned) out.push(h('p', { class: 'warn' }, `公費有 ${formatMinor(fundUnassigned, b)} 尚未指定保管人，結算結果暫不含這筆。`));
   if (!transfers.length) {
-    out.push(h('div', { class: 'empty done' }, h('p', { class: 'big' }, '已經結清'), h('p', { class: 'hint' }, '目前沒有人需要轉帳。')));
+    out.push(h('div', { class: 'empty done' }, emptyArt(), h('p', { class: 'big' }, '已經結清'), h('p', { class: 'hint' }, '目前沒有人需要轉帳。')));
     return out;
   }
   const dc = S.settleCur || b;
@@ -301,7 +335,7 @@ function settleTab(net, fundUnassigned) {
     Object.keys(CURRENCIES).map((k) => h('option', { value: k, selected: k === dc }, k)));
   out.push(h('div', { class: 'row between settle-head' }, h('p', { class: 'settle-sum' }, `只要 ${transfers.length} 筆轉帳就能全部結清`), curSel));
   if (dc !== b) out.push(h('p', { class: 'hint' }, lr ? `以 ${lr.date || '今日'} 匯率從 ${b} 換算，僅供參考；「記為已付款」仍以 ${b} 記錄。` : '載入匯率中…'));
-  out.push(h('ul', { class: 'xfer-list' }, transfers.map((t) => {
+  const xferItem = (t) => {
     const to = S.members.find((m) => m.id === t.to) || { name: memberName(t.to), payInfo: {} };
     const from = S.members.find((m) => m.id === t.from) || { name: memberName(t.from) };
     const pi = to.payInfo || {};
@@ -321,7 +355,15 @@ function settleTab(net, fundUnassigned) {
         ? h('dl', { class: 'payinfo' }, payRows.map(([k, v, c]) => [h('dt', {}, k), h('dd', {}, h('span', {}, v), c ? h('button', { class: 'icon-btn sm', 'aria-label': `複製${k}`, onclick: () => copyText(c) }, icon('copy', 16)) : null)]))
         : h('p', { class: 'hint' }, `${to.name} 還沒有填匯款資訊。`),
       h('button', { class: 'btn ghost sm', onclick: () => markPaid(t) }, icon('check', 16), '記為已付款'));
-  })));
+  };
+  // B2：跟我有關的放最上面
+  const groupsX = S.meId
+    ? [['我要付的', transfers.filter((t) => t.from === S.meId)], ['要付給我的', transfers.filter((t) => t.to === S.meId)], ['其他人', transfers.filter((t) => t.from !== S.meId && t.to !== S.meId)]]
+    : [[null, transfers]];
+  groupsX.filter(([, arr]) => arr.length).forEach(([title, arr]) => {
+    if (title) out.push(h('h3', { class: 'sec-title' }, `${title}（${arr.length}）`));
+    out.push(h('ul', { class: 'xfer-list' }, arr.map(xferItem)));
+  });
   out.push(h('button', { class: 'btn ghost block', onclick: async () => {
     const text = settleText(S.ledger, S.members, transfers, show);
     if (await shareToGroup({ kind: 'settle', currency: dc }, { fallbackText: text })) return;
@@ -367,9 +409,10 @@ function statsTab(st, net) {
       mine ? kpi('占團體', `${st.total ? Math.round((total / st.total) * 100) : 0}%`) : kpi('每人平均', formatMinor(Math.round(total / Math.max(1, people.length)), b)),
       kpi('天數', `${days.length} 天`), kpi('筆數', `${rows.length} 筆`)),
     h('h3', { class: 'sec-title' }, '每日花費'),
-    trendChart(days, byDay, b),
+    h('div', { onclick: (e) => { const d = e.target.closest('[data-date]'); if (d) { S.filter = { kind: mine ? 'mine' : 'all', cat: null, date: d.dataset.date }; S.tab = 'list'; renderLedger(); window.scrollTo(0, 0); } } }, trendChart(days, byDay, b)),
+    h('p', { class: 'hint' }, '點長條或分類，可以直接看那部分的明細。'),
     h('h3', { class: 'sec-title' }, '分類'),
-    h('ul', { class: 'bars' }, cats.map(([c, v]) => h('li', {},
+    h('ul', { class: 'bars' }, cats.map(([c, v]) => h('li', { class: 'clickable', role: 'button', tabindex: '0', 'aria-label': `看 ${categoryOf(c).name} 的明細`, onclick: () => { S.filter = { kind: mine ? 'mine' : 'all', cat: c, date: null }; S.tab = 'list'; renderLedger(); window.scrollTo(0, 0); } },
       h('span', { class: 'bar-label' }, `${categoryOf(c).icon} ${categoryOf(c).name}`),
       h('span', { class: 'bar-track' }, h('span', { class: 'bar-fill', style: `width:${Math.max(3, (v / max) * 100)}%` })),
       h('span', { class: 'bar-val' }, formatMinor(v, b), h('small', {}, `${Math.round((v / total) * 100)}%`))))),
@@ -410,7 +453,7 @@ function trendChart(days, byDay, b) {
   const every = Math.ceil(days.length / 8);
   const peak = vals.indexOf(mx);
   const svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="每日花費長條圖" class="trend">
-    ${vals.map((v, i) => { const hh = v ? Math.max(2, (v / mx) * (H - top - bottom)) : 0; return `<rect x="${i * bw + bw * 0.18}" y="${H - bottom - hh}" width="${bw * 0.64}" height="${hh}" rx="3" class="${i === peak ? 'peak' : ''}"><title>${days[i]}：${formatMinor(v, b)}</title></rect>`; }).join('')}
+    ${vals.map((v, i) => { const hh = v ? Math.max(2, (v / mx) * (H - top - bottom)) : 0; return `<rect x="${i * bw}" y="${top}" width="${bw}" height="${H - top - bottom}" class="hit" data-date="${days[i]}"></rect><rect x="${i * bw + bw * 0.18}" y="${H - bottom - hh}" width="${bw * 0.64}" height="${hh}" rx="3" class="${i === peak ? 'peak' : ''}" data-date="${days[i]}" style="cursor:pointer"><title>${days[i]}：${formatMinor(v, b)}</title></rect>`; }).join('')}
     <line x1="0" x2="${W}" y1="${H - bottom + 0.5}" y2="${H - bottom + 0.5}" class="axis"/>
     ${days.map((d, i) => (i % every === 0 || i === days.length - 1 ? `<text x="${i * bw + bw / 2}" y="${H - 6}" text-anchor="middle">${Number(d.slice(5, 7))}/${Number(d.slice(8))}</text>` : '')).join('')}
     <text x="${Math.min(Math.max(peak * bw + bw / 2, 30), W - 30)}" y="14" text-anchor="middle" class="peak-label">${formatMinor(mx, b)}</text>
@@ -657,6 +700,16 @@ function editor(rec, presetType) {
   } });
   const note = h('input', { class: 'input', placeholder: '備註（選填）', value: r.note || '', maxlength: 120, oninput: () => (r.note = note.value) });
   const splitBox = h('div', {});
+  // A3：日期、備註、分享收進「更多選項」，預設收合（今天、依帳本預設分享）
+  let moreOpen = editing && !!r.note;
+  const moreSummary = () => `${r.date === today() ? '今天' : `${Number(r.date.slice(5, 7))}/${Number(r.date.slice(8))}`}，${shareBox.on() ? '分享到群組' : '不分享'}${r.note ? '，有備註' : ''}`;
+  const moreBox = () => {
+    const sumTxt = h('small', { class: 'hint' }, moreSummary());
+    const d = h('details', { class: 'more', open: moreOpen, ontoggle: () => (moreOpen = d.open), onchange: () => (sumTxt.textContent = moreSummary()), oninput: () => (sumTxt.textContent = moreSummary()) },
+      h('summary', {}, h('span', {}, '更多選項'), sumTxt),
+      h('div', { class: 'form more-body' }, h('div', { class: 'grid2' }, field('日期', date), field('備註', note)), shareBox.el));
+    return d;
+  };
 
   function personChips(selected, onPick, { withFund = false, exclude } = {}) {
     const opts = [...members.map((m) => [m.id, m.name, m]), ...(withFund ? [[FUND_ID, '公費', { name: '公' }]] : [])].filter(([id]) => id !== exclude);
@@ -730,8 +783,7 @@ function editor(rec, presetType) {
         personChips(r.payerId, (id) => { r.payerId = id; if (r.type === 'transfer' && r.split.parts[id] !== undefined) r.split.parts = {}; draw(); }, { withFund: r.type === 'expense' && !!S.ledger.fundEnabled })),
       r.type === 'transfer' ? h('div', {}, h('span', { class: 'field-label' }, '轉給誰'), personChips(toId, (id) => { r.split.parts = { [id]: r.amount || 0 }; draw(); }, { exclude: r.payerId })) : null,
       splitBox,
-      h('div', { class: 'grid2' }, field('日期', date), field('備註', note)),
-      shareBox.el,
+      moreBox(),
       h('button', { class: 'btn primary block', onclick: saveIt }, editing ? '儲存修改' : '記下這筆'),
       editing ? h('button', { class: 'btn text-danger block', onclick: deleteIt }, icon('trash', 18), '刪除這筆') : null);
     drawSplit();
@@ -746,15 +798,21 @@ function editor(rec, presetType) {
     const saved = await run(() => (editing ? store.updateRecord(rec.id, out) : store.addRecord(S.ledger.id, out)), editing ? '已儲存修改' : '已記下');
     close();
     if (shareBox.on()) await shareRecord(editing ? 'update' : 'create', { ...out, ...saved });
+    S.flash = saved.id;
     reload();
   }
   async function deleteIt() {
     const sb = shareToggle();
     if (!(await confirmBox(`刪除「${rec.title}」？`, '刪除', { danger: true, extra: sb.el }))) return;
-    await run(() => store.deleteRecord(rec.id), '已刪除');
+    await run(() => store.deleteRecord(rec.id));
     close();
     if (sb.on()) await shareRecord('delete', rec);
-    reload();
+    await reload();
+    toast(`已刪除「${rec.title}」`, '', { action: { label: '復原', onClick: async () => {
+      const back = await run(() => store.restoreRecord(rec.id), '已復原');
+      if (sb.on()) await shareRecord('create', back);
+      S.flash = rec.id; reload();
+    } } });
   }
 
   const titles = { expense: editing ? '編輯支出' : '記一筆', transfer: '轉帳', fund_in: '存入公費' };

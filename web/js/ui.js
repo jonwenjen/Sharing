@@ -54,14 +54,24 @@ export function avatar(member, size = 36) {
 }
 
 let toastTimer;
-export function toast(msg, kind = '') {
+/** 提示訊息；可帶一個動作按鈕（例如「復原」） */
+export function toast(msg, kind = '', { action, duration } = {}) {
   let t = document.querySelector('.toast');
   if (!t) { t = h('div', { class: 'toast', role: 'status' }); document.body.append(t); }
-  t.textContent = msg;
-  t.className = `toast show ${kind}`;
+  t.replaceChildren(h('span', {}, msg), action ? h('button', { class: 'toast-act', onclick: () => { t.classList.remove('show'); action.onClick(); } }, action.label) : null);
+  if (!action) t.replaceChildren(msg);
+  t.className = `toast show ${kind} ${action ? 'has-act' : ''}`;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+  toastTimer = setTimeout(() => t.classList.remove('show'), duration || (action ? 5000 : 2400));
 }
+
+/** 空狀態插圖：一張線條小車票 */
+export const emptyArt = () => h('span', { class: 'empty-art', 'aria-hidden': 'true', html: '<svg viewBox="0 0 120 64" width="120" height="64" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10h74v8a6 6 0 000 12v4a6 6 0 000 12v8H8a4 4 0 01-4-4V14a4 4 0 014-4z"/><path d="M82 10h30a4 4 0 014 4v36a4 4 0 01-4 4H82"/><path d="M82 18v36" stroke-dasharray="3 4"/><path d="M18 26h40M18 36h26"/><circle cx="99" cy="32" r="7"/></svg>' });
+
+/** 載入中的骨架畫面 */
+export const skeleton = () => h('div', { class: 'skel-wrap', 'aria-busy': 'true', 'aria-label': '載入中' },
+  h('div', { class: 'skel skel-ticket' }), h('div', { class: 'skel skel-tabs' }),
+  [0, 1, 2].map(() => h('div', { class: 'skel skel-row' })));
 
 /** 由下往上的抽屜；回傳 close() */
 export function sheet(title, body, { onClose, tall = false, required = false } = {}) {

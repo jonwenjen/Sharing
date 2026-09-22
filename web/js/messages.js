@@ -2,6 +2,7 @@
 import { formatMoney, formatMinor, fromMinor, recordShares, categoryOf, FUND_ID, stats } from './money.js';
 
 const nameOf = (members, id) => (id === FUND_ID ? '公費' : (members.find((m) => m.id === id) || {}).name || '已移除成員');
+const BRAND = '#2F54EB';
 const ACTION = { create: '新增', update: '修改', delete: '刪除' };
 
 export function describeRecord(rec, members) {
@@ -16,21 +17,30 @@ export function recordFlex(action, rec, ledger, members, url) {
   const amt = formatMoney(Number(rec.amount), rec.currency);
   const base = rec.currency !== ledger.baseCurrency ? formatMinor(recordShares(rec, ledger.baseCurrency).total, ledger.baseCurrency) : '';
   const title = rec.type === 'expense' ? `${categoryOf(rec.category).icon} ${rec.title || categoryOf(rec.category).name}` : rec.title || describeRecord(rec, members);
-  const color = action === 'delete' ? '#8A94A6' : '#2F54EB';
+  const del = action === 'delete';
+  // 視覺呼應網頁的「車票」：品牌色頂條＋大字金額＋虛線分隔
   return {
     type: 'flex',
     altText: `【${ledger.name}】${ACTION[action]}：${rec.title || ''} ${amt}`,
     contents: {
       type: 'bubble', size: 'kilo',
-      body: {
-        type: 'box', layout: 'vertical', spacing: 'sm', contents: [
-          { type: 'text', text: `${ledger.name}｜${ACTION[action]}紀錄`, size: 'xs', color: '#8A94A6' },
-          { type: 'text', text: title, weight: 'bold', size: 'md', wrap: true, decoration: action === 'delete' ? 'line-through' : 'none' },
-          { type: 'text', text: amt + (base ? `（約 ${base}）` : ''), size: 'xl', weight: 'bold', color },
-          { type: 'text', text: describeRecord(rec, members), size: 'sm', color: '#5B6475', wrap: true },
+      header: {
+        type: 'box', layout: 'horizontal', paddingAll: '12px', backgroundColor: del ? '#8A94A6' : BRAND,
+        contents: [
+          { type: 'text', text: ledger.name, size: 'xs', color: '#FFFFFF', weight: 'bold', flex: 1, wrap: false },
+          { type: 'text', text: `${ACTION[action]}紀錄`, size: 'xs', color: '#FFFFFFCC', align: 'end', flex: 0 },
         ],
       },
-      footer: { type: 'box', layout: 'vertical', contents: [{ type: 'button', style: 'link', height: 'sm', action: { type: 'uri', label: '開啟帳本', uri: url } }] },
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '16px', contents: [
+          { type: 'text', text: title, weight: 'bold', size: 'md', wrap: true, color: '#18223A', decoration: del ? 'line-through' : 'none' },
+          { type: 'text', text: amt, size: 'xxl', weight: 'bold', color: del ? '#8A94A6' : '#18223A', decoration: del ? 'line-through' : 'none' },
+          base ? { type: 'text', text: `約 ${base}`, size: 'xs', color: '#5E6882' } : { type: 'filler' },
+          { type: 'separator', margin: 'md', color: '#DDE2EB' },
+          { type: 'text', text: describeRecord(rec, members), size: 'sm', color: '#5E6882', wrap: true, margin: 'md' },
+        ],
+      },
+      footer: { type: 'box', layout: 'vertical', paddingAll: '8px', contents: [{ type: 'button', style: 'link', color: BRAND, height: 'sm', action: { type: 'uri', label: '開啟帳本', uri: url } }] },
     },
   };
 }
@@ -40,8 +50,8 @@ export function inviteFlex(ledger, url) {
     type: 'flex', altText: `一起記帳：${ledger.name}`,
     contents: {
       type: 'bubble', size: 'kilo',
+      header: { type: 'box', layout: 'vertical', paddingAll: '12px', backgroundColor: BRAND, contents: [{ type: 'text', text: '🎟️ 一起分帳', size: 'xs', color: '#FFFFFF', weight: 'bold' }] },
       body: { type: 'box', layout: 'vertical', spacing: 'sm', contents: [
-        { type: 'text', text: '一起分帳', size: 'xs', color: '#8A94A6' },
         { type: 'text', text: ledger.name, weight: 'bold', size: 'lg', wrap: true },
         { type: 'text', text: '點開後選擇你是哪一位成員，就能一起記帳。', size: 'sm', color: '#5B6475', wrap: true },
       ] },
