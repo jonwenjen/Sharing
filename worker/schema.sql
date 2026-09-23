@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS ledgers (
   fund_enabled INTEGER NOT NULL DEFAULT 0,
   fund_custodian TEXT,
   share_default INTEGER NOT NULL DEFAULT 1,
+  merge_currencies INTEGER NOT NULL DEFAULT 1,
   archived INTEGER NOT NULL DEFAULT 0,
   deleted INTEGER NOT NULL DEFAULT 0,
   fixed_rates TEXT DEFAULT '{}',
