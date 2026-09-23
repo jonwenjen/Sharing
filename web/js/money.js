@@ -153,6 +153,22 @@ export function validateRecord(rec) {
   return errs;
 }
 
+/**
+ * 依帳本設定切成「結算群組」。
+ * 合併結算（預設）→ 一組，全部換算成帳本幣別；
+ * 分開結算 → 每個幣別各一組，不換匯、各自結算。
+ */
+export function currencyGroups(records, ledger) {
+  const base = ledger.baseCurrency;
+  if (ledger.mergeCurrencies == null || ledger.mergeCurrencies) return [{ currency: base, records, merged: true }];
+  const map = {};
+  for (const r of records) (map[r.currency] = map[r.currency] || []).push(r);
+  if (!map[base]) map[base] = [];
+  return Object.entries(map)
+    .map(([currency, rs]) => ({ currency, records: rs, merged: false, total: stats(rs, currency).total }))
+    .sort((a, b) => b.total - a.total || (a.currency === base ? -1 : 1));
+}
+
 /** 計算每位成員（含公費）淨額：正數＝應收，負數＝應付 */
 export function computeBalances(records, base) {
   const net = {};

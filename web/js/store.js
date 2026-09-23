@@ -70,7 +70,7 @@ function seed() {
     r({ type: 'expense', title: '唐吉訶德', category: 'shopping', amount: 8600, currency: 'JPY', rate: 0.213, payerId: 'm3', split: { mode: 'amount', parts: { m3: 5000, m2: 3600 } }, date: '2026-12-03' }),
   ];
   return {
-    ledgers: [{ id: L, name: '東京五日遊', baseCurrency: 'TWD', groupId: null, createdBy: 'demo', fundEnabled: 1, fundCustodian: 'm0', shareDefault: 1, archived: 0, fixedRates: {}, inviteCode: 'demoinvite0001', creatorName: '小安', groupName: '東京旅遊團', createdAt: now(), updatedAt: now() }],
+    ledgers: [{ id: L, name: '東京五日遊', baseCurrency: 'TWD', groupId: null, createdBy: 'demo', fundEnabled: 1, fundCustodian: 'm0', shareDefault: 1, mergeCurrencies: 1, archived: 0, fixedRates: {}, inviteCode: 'demoinvite0001', creatorName: '小安', groupName: '東京旅遊團', createdAt: now(), updatedAt: now() }],
     members: m, records,
   };
 }
@@ -107,7 +107,7 @@ const demo = {
     return { ledger, members: db.members.filter((x) => x.ledgerId === id), records: db.records.filter((r) => r.ledgerId === id && !r.deleted), viewer: { isAdmin: false, isCreator: ledger.createdBy === me() } };
   }),
   createLedger: (d) => mutate((db) => {
-    const l = { id: uid(), name: d.name, baseCurrency: d.baseCurrency || 'TWD', groupId: d.groupId || null, createdBy: me(), fundEnabled: 0, fundCustodian: null, shareDefault: 1, archived: 0, fixedRates: {}, inviteCode: uid(), creatorName: line.profile.displayName, groupName: null, createdAt: now(), updatedAt: now() };
+    const l = { id: uid(), name: d.name, baseCurrency: d.baseCurrency || 'TWD', groupId: d.groupId || null, createdBy: me(), fundEnabled: 0, fundCustodian: null, shareDefault: 1, mergeCurrencies: 1, archived: 0, fixedRates: {}, inviteCode: uid(), creatorName: line.profile.displayName, groupName: null, createdAt: now(), updatedAt: now() };
     db.ledgers.unshift(l);
     (d.members || []).forEach((name, i) => db.members.push({ id: uid(), ledgerId: l.id, name, lineUserId: i === 0 && d.claimFirst ? me() : null, avatar: i === 0 && d.claimFirst ? line.profile.pictureUrl : '', payInfo: {}, active: 1 }));
     return l;

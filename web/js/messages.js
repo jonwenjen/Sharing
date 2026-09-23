@@ -1,5 +1,6 @@
 // LINE 訊息（Flex Message）與 CSV 匯出
-import { formatMoney, formatMinor, fromMinor, recordShares, categoryOf, FUND_ID, stats } from './money.js';
+import { formatMoney, formatMinor, fromMinor, recordShares, categoryOf, FUND_ID, stats, currencyGroups, settlementBalances } from './money.js';
+import { minTransfers } from './settle.js';
 
 const nameOf = (members, id) => (id === FUND_ID ? '公費' : (members.find((m) => m.id === id) || {}).name || '已移除成員');
 const BRAND = '#2F54EB';
@@ -60,6 +61,24 @@ export function inviteFlex(ledger, url) {
   };
 }
 
+/** 整本帳本的結算文字：合併結算時一段，分幣別結算時每個幣別一段 */
+export function settleAllText(ledger, members, records, fmtFor) {
+  const groups = currencyGroups(records, ledger);
+  const blocks = [];
+  let count = 0;
+  for (const g of groups) {
+    const { net } = settlementBalances(g.records, g.currency, ledger.fundEnabled ? ledger.fundCustodian : null);
+    let tx = [];
+    try { tx = minTransfers(net); } catch { tx = []; }
+    if (!tx.length) continue;
+    count += tx.length;
+    const fmt = (fmtFor && fmtFor(g)) || ((v) => formatMinor(v, g.currency));
+    blocks.push((groups.length > 1 ? `【${g.currency}】\n` : '') + tx.map((t) => `・${nameOf(members, t.from)} → ${nameOf(members, t.to)}　${fmt(t.amount)}`).join('\n'));
+  }
+  if (!count) return `【${ledger.name}】目前已經結清，不需要轉帳。`;
+  return [`【${ledger.name}】最少 ${count} 筆轉帳即可結清：`, ...blocks].join('\n');
+}
+
 export function settleText(ledger, members, transfers, fmt = (v) => formatMinor(v, ledger.baseCurrency)) {
   if (!transfers.length) return `【${ledger.name}】目前已經結清，不需要轉帳。`;
   return [`【${ledger.name}】最少 ${transfers.length} 筆轉帳即可結清：`,
@@ -82,11 +101,16 @@ export function recordsCsv(ledger, members, records, sep = ',') {
   return sep === ',' ? csv([head, ...rows]) : [head, ...rows].map((r) => r.map((v) => String(v ?? '').replace(/[\t\n]/g, ' ')).join('\t')).join('\n');
 }
 
-export function summaryCsv(ledger, members, records, balances) {
-  const base = ledger.baseCurrency;
-  const s = stats(records, base);
-  const f = (v) => fromMinor(v, base);
-  const rows = members.map((m) => { const p = s.people[m.id] || { paid: 0, share: 0, fundIn: 0 }; return [m.name, f(p.paid), f(p.share), f(p.fundIn), f(balances[m.id] || 0)]; });
-  const cats = Object.entries(s.byCategory).map(([c, v]) => [categoryOf(c).name, f(v)]);
-  return csv([[`${ledger.name}（${base}）`], [], ['成員', '代墊支出', '應分攤', '存入公費', '結算淨額(正=應收)'], ...rows, [], ['分類', '金額'], ...cats, ['合計', f(s.total)]]);
+export function summaryCsv(ledger, members, records) {
+  const out = [[ledger.name]];
+  for (const g of currencyGroups(records, ledger)) {
+    const cur = g.currency;
+    const s = stats(g.records, cur);
+    const { net } = settlementBalances(g.records, cur, ledger.fundEnabled ? ledger.fundCustodian : null);
+    const f = (v) => fromMinor(v, cur);
+    const rows = members.map((m) => { const p = s.people[m.id] || { paid: 0, share: 0, fundIn: 0 }; return [m.name, f(p.paid), f(p.share), f(p.fundIn), f(net[m.id] || 0)]; });
+    const cats = Object.entries(s.byCategory).map(([c, v]) => [categoryOf(c).name, f(v)]);
+    out.push([], [g.merged ? `全部（換算成 ${cur}）` : `${cur} 分開結算`], ['成員', '代墊支出', '應分攤', '存入公費', '結算淨額(正=應收)'], ...rows, [], ['分類', '金額'], ...cats, ['合計', f(s.total)]);
+  }
+  return csv(out);
 }
