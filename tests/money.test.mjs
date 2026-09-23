@@ -120,3 +120,24 @@ test('自訂金額不足額：所有人平均（fill: all）', async () => {
   const legacy = { ...rec, split: { mode: 'amount', parts: { a: 400, b: 200, c: '' } } };
   assert.deepEqual(rs(legacy, 'TWD').shares, { a: 400, b: 200, c: 400 });
 });
+
+test('分幣別結算：不換匯、各自結算', async () => {
+  const { currencyGroups } = await import('../web/js/money.js');
+  const recs = [
+    rec({ amount: 1000, currency: 'TWD', payerId: 'a', split: { mode: 'equal', parts: { a: true, b: true } } }),
+    rec({ amount: 3000, currency: 'JPY', rate: 0.21, payerId: 'b', split: { mode: 'equal', parts: { a: true, b: true } } }),
+  ];
+  const merged = currencyGroups(recs, { baseCurrency: 'TWD', mergeCurrencies: 1 });
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].records.length, 2);
+  const split = currencyGroups(recs, { baseCurrency: 'TWD', mergeCurrencies: 0 });
+  assert.deepEqual(split.map((g) => g.currency).sort(), ['JPY', 'TWD']);
+  const twd = split.find((g) => g.currency === 'TWD');
+  const jpy = split.find((g) => g.currency === 'JPY');
+  assert.equal(stats(twd.records, 'TWD').total, 1000);
+  assert.equal(stats(jpy.records, 'JPY').total, 3000, '日圓不換算成台幣');
+  assert.equal(computeBalances(twd.records, 'TWD').a, 500);
+  assert.equal(computeBalances(jpy.records, 'JPY').b, 1500);
+  // 沒有紀錄的帳本也要有結算幣別那一組
+  assert.deepEqual(currencyGroups([], { baseCurrency: 'TWD', mergeCurrencies: 0 }).map((g) => g.currency), ['TWD']);
+});
