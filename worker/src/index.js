@@ -2,7 +2,7 @@
 // 路由：/api/*（前端 LIFF 呼叫，需 LINE ID Token）與 /webhook（LINE Messaging API）
 import { settlementBalances, CURRENCIES, validateRecord, formatMinor, formatMoney, fromMinor, decimalsOf, guessCategory, categoryOf } from '../../web/js/money.js';
 import { parseQuickEntry, QUICK_HELP } from '../../web/js/parse.js';
-import { recordFlex, settleText } from '../../web/js/messages.js';
+import { recordFlex, settleAllText } from '../../web/js/messages.js';
 import { runLadder, ladderText, LADDER_MODES } from '../../web/js/ladder.js';
 import { minTransfers } from '../../web/js/settle.js';
 
@@ -44,7 +44,7 @@ export async function authenticate(req, env) {
 }
 
 // ---------- 資料列轉換 ----------
-const ledgerOut = (r) => r && ({ id: r.id, name: r.name, baseCurrency: r.base_currency, groupId: r.group_id, createdBy: r.created_by, fundEnabled: r.fund_enabled, fundCustodian: r.fund_custodian, shareDefault: r.share_default, archived: r.archived, fixedRates: JSON.parse(r.fixed_rates || '{}'), inviteCode: r.invite_code || null, groupName: r.group_name || null, creatorName: r.creator_name || null, createdAt: r.created_at, updatedAt: r.updated_at });
+const ledgerOut = (r) => r && ({ id: r.id, name: r.name, baseCurrency: r.base_currency, mergeCurrencies: r.merge_currencies == null ? 1 : r.merge_currencies, groupId: r.group_id, createdBy: r.created_by, fundEnabled: r.fund_enabled, fundCustodian: r.fund_custodian, shareDefault: r.share_default, archived: r.archived, fixedRates: JSON.parse(r.fixed_rates || '{}'), inviteCode: r.invite_code || null, groupName: r.group_name || null, creatorName: r.creator_name || null, createdAt: r.created_at, updatedAt: r.updated_at });
 const memberOut = (r) => r && ({ id: r.id, ledgerId: r.ledger_id, name: r.name, lineUserId: r.line_user_id, avatar: r.avatar || '', payInfo: JSON.parse(r.pay_info || '{}'), active: r.active });
 const recordOut = (r) => r && ({ id: r.id, ledgerId: r.ledger_id, type: r.type, title: r.title, category: r.category, amount: r.amount, currency: r.currency, rate: r.rate, payerId: r.payer_id, split: JSON.parse(r.split), date: r.date, note: r.note || '', createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at });
 
@@ -318,26 +318,21 @@ async function buildNotify(env, lid, body) {
   }
   if (body.kind === 'settle') {
     const base = ledger.baseCurrency;
-    const { net } = settlementBalances(records, base, ledger.fundEnabled ? ledger.fundCustodian : null);
-    const tx = minTransfers(net);
-    let fmt = (v) => formatMinor(v, base);
     const cur = body.currency;
-    if (cur && cur !== base && CURRENCIES[cur]) {
+    let fmtFor = null;
+    // 合併結算時可以指定用哪個幣別顯示（依今日匯率換算）
+    if (ledger.mergeCurrencies && cur && cur !== base && CURRENCIES[cur]) {
       const r = (await rates(env, base).catch(() => ({ rates: {} }))).rates[cur];
-      if (r) fmt = (v) => { const d = decimalsOf(cur); return formatMoney(Math.round((fromMinor(v, base) / r) * 10 ** d) / 10 ** d, cur); };
+      if (r) fmtFor = () => (v) => { const d = decimalsOf(cur); return formatMoney(Math.round((fromMinor(v, base) / r) * 10 ** d) / 10 ** d, cur); };
     }
-    return [{ type: 'text', text: settleText(ledger, members, tx, fmt) }];
+    return [{ type: 'text', text: settleAllText(ledger, members, records, fmtFor) }];
   }
   throw new HttpError(400, '不支援的通知類型');
 }
 
 export async function settleSummary(env, ledgerId) {
   const { ledger, members, records } = await loadLedger(env, ledgerId);
-  const { net } = settlementBalances(records, ledger.baseCurrency, ledger.fundEnabled ? ledger.fundCustodian : null);
-  const tx = minTransfers(net);
-  const name = (id) => (members.find((m) => m.id === id) || {}).name || '？';
-  if (!tx.length) return `【${ledger.name}】目前已經結清。`;
-  return [`【${ledger.name}】最少 ${tx.length} 筆轉帳即可結清：`, ...tx.map((t) => `・${name(t.from)} → ${name(t.to)}　${formatMinor(t.amount, ledger.baseCurrency)}`)].join('\n');
+  return settleAllText(ledger, members, records);
 }
 
 // ---------- 權限控管 ----------
@@ -521,7 +516,7 @@ async function api(req, env, url) {
         if (!CURRENCIES[body.baseCurrency]) throw new HttpError(400, '不支援的幣別');
         f.base_currency = body.baseCurrency;
       }
-      for (const [k, col] of [['fundEnabled', 'fund_enabled'], ['shareDefault', 'share_default'], ['archived', 'archived']]) if (body[k] != null) f[col] = body[k] ? 1 : 0;
+      for (const [k, col] of [['fundEnabled', 'fund_enabled'], ['shareDefault', 'share_default'], ['archived', 'archived'], ['mergeCurrencies', 'merge_currencies']]) if (body[k] != null) f[col] = body[k] ? 1 : 0;
       if (body.fundCustodian !== undefined) f.fund_custodian = body.fundCustodian || null;
       if (body.groupId !== undefined) {
         const isMember = l.created_by === user.sub || (await env.DB.prepare('SELECT 1 FROM members WHERE ledger_id = ? AND line_user_id = ?').bind(lid, user.sub).first());
@@ -684,6 +679,7 @@ const MIGRATIONS = [
   ['invite_code', 'ALTER TABLE ledgers ADD COLUMN invite_code TEXT'],
   ['group_name', 'ALTER TABLE ledgers ADD COLUMN group_name TEXT'],
   ['creator_name', 'ALTER TABLE ledgers ADD COLUMN creator_name TEXT'],
+  ['merge_currencies', 'ALTER TABLE ledgers ADD COLUMN merge_currencies INTEGER NOT NULL DEFAULT 1'],
 ];
 export async function ensureSchema(env) {
   if (schemaChecked || !env.DB) return;
