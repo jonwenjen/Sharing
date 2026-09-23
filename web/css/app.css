@@ -405,3 +405,15 @@ body.lad-open { overflow: hidden; }
 .lad-card .btn.text { color: #B8BEE8; }
 .lad-card .btn.primary { background: linear-gradient(135deg, #FF4D6D, #FF922B); }
 @media (prefers-reduced-motion: reduce) { .lad-count { display: none; } }
+
+/* 分幣別結算 */
+.multi-cur { display: grid; gap: 2px; margin: 2px 0; }
+.mc-line { display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
+.mc-line em { font-style: normal; font-size: 11px; opacity: .75; min-width: 34px; }
+.mc-line b { font: 800 clamp(20px, 6.5vw, 26px)/1.15 var(--num); letter-spacing: -.02em; }
+.mc-line.pos b { color: var(--ticket-pos); }
+.mc-line.neg b { color: var(--ticket-neg); }
+.multi-cur.stub .mc-line b { font-size: 15px; font-weight: 700; }
+.multi-cur.stub .mc-line { justify-content: center; }
+.cur-section { display: grid; gap: 10px; }
+.cur-section + .cur-section { margin-top: 6px; border-top: 1px dashed var(--line); padding-top: 12px; }
