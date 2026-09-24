@@ -141,3 +141,36 @@ test('分幣別結算：不換匯、各自結算', async () => {
   // 沒有紀錄的帳本也要有結算幣別那一組
   assert.deepEqual(currencyGroups([], { baseCurrency: 'TWD', mergeCurrencies: 0 }).map((g) => g.currency), ['TWD']);
 });
+
+test('合併成員：金額不變、自己轉給自己的轉帳會被移除', async () => {
+  const { mergeMemberInRecord, recordShares: rs, evalAmount } = await import('../web/js/money.js');
+  // 平分：a、a2 同一人重複 → 其他人金額不能變
+  const r1 = rec({ amount: 1200, payerId: 'a2', split: { mode: 'equal', parts: { a: true, a2: true, b: true, c: true } } });
+  const before = rs(r1, 'TWD').shares;
+  const m1 = mergeMemberInRecord(r1, 'a2', 'a');
+  const after = rs(m1.rec, 'TWD').shares;
+  assert.equal(m1.rec.payerId, 'a');
+  assert.equal(after.b, before.b);
+  assert.equal(after.c, before.c);
+  assert.equal(after.a, before.a + before.a2);
+  // 自訂金額相加（含留空）
+  const r2 = rec({ amount: 1000, payerId: 'b', split: { mode: 'amount', fill: 'blank', parts: { a: 300, a2: 200, b: '' } } });
+  assert.deepEqual(mergeMemberInRecord(r2, 'a2', 'a').rec.split.parts, { a: 500, b: '' });
+  // 份數相加
+  const r3 = rec({ amount: 900, payerId: 'b', split: { mode: 'shares', parts: { a: 1, a2: 2, b: 3 } } });
+  assert.deepEqual(mergeMemberInRecord(r3, 'a2', 'a').rec.split.parts, { a: 3, b: 3 });
+  // 只有被合併的人參與
+  assert.deepEqual(mergeMemberInRecord(rec({ amount: 100, payerId: 'b', split: { mode: 'equal', parts: { a2: true } } }), 'a2', 'a').rec.split.parts, { a: true });
+  // a2 轉給 a → 合併後變成自己轉自己 → 刪除
+  const t = { type: 'transfer', amount: 100, currency: 'TWD', rate: 1, payerId: 'a2', split: { mode: 'amount', parts: { a: 100 } } };
+  assert.equal(mergeMemberInRecord(t, 'a2', 'a').drop, true);
+  // 無關的紀錄
+  assert.equal(mergeMemberInRecord(rec({ amount: 1, payerId: 'b', split: { mode: 'equal', parts: { b: true } } }), 'a2', 'a').changed, false);
+  // 金額算式
+  assert.equal(evalAmount('1200+350'), 1550);
+  assert.equal(evalAmount('3×450'), 1350);
+  assert.equal(evalAmount('(100+50)/3'), 50);
+  assert.equal(evalAmount('1,200'), 1200);
+  assert.equal(evalAmount('12abc'), null);
+  assert.equal(evalAmount('1+'), null);
+});
