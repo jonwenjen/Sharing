@@ -1,6 +1,6 @@
 // Sharing API — Cloudflare Worker + D1
 // 路由：/api/*（前端 LIFF 呼叫，需 LINE ID Token）與 /webhook（LINE Messaging API）
-import { settlementBalances, CURRENCIES, validateRecord, formatMinor, formatMoney, fromMinor, decimalsOf, guessCategory, categoryOf } from '../../web/js/money.js';
+import { settlementBalances, CURRENCIES, validateRecord, formatMinor, formatMoney, fromMinor, decimalsOf, guessCategory, categoryOf, mergeMemberInRecord } from '../../web/js/money.js';
 import { parseQuickEntry, QUICK_HELP } from '../../web/js/parse.js';
 import { recordFlex, settleAllText } from '../../web/js/messages.js';
 import { runLadder, ladderText, LADDER_MODES } from '../../web/js/ladder.js';
@@ -598,6 +598,34 @@ async function api(req, env, url) {
       if (cols.length) await env.DB.prepare(`UPDATE members SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`).bind(...cols.map((c) => f[c]), mem.id).run();
       await touch(env, mem.ledger_id);
       return memberOut(await env.DB.prepare('SELECT * FROM members WHERE id = ?').bind(mem.id).first());
+    }
+    if (seg[2] === 'merge' && m === 'POST') {
+      // 合併重複的成員：把 mem 的紀錄、LINE 綁定、匯款資訊併到 target，再移除 mem
+      const target = await env.DB.prepare('SELECT * FROM members WHERE id = ?').bind(String(body.into || '')).first();
+      if (!target || target.ledger_id !== mem.ledger_id || target.id === mem.id) throw new HttpError(400, '請選擇同一本帳本裡的另一位成員');
+      const l = await getLedgerRow(env, mem.ledger_id);
+      assertWritable(l);
+      const allowed = l.created_by === user.sub || isAdmin(env, user.sub) || (await env.DB.prepare('SELECT 1 FROM members WHERE ledger_id = ? AND line_user_id = ?').bind(l.id, user.sub).first());
+      if (!allowed) throw new HttpError(403, '只有帳本成員可以合併成員');
+      if (mem.line_user_id && target.line_user_id && mem.line_user_id !== target.line_user_id) throw new HttpError(409, '這兩位成員綁定了不同的 LINE 帳號，不能合併');
+      const { results } = await env.DB.prepare('SELECT * FROM records WHERE ledger_id = ?1 AND (payer_id = ?2 OR split LIKE ?3)').bind(l.id, mem.id, `%"${mem.id}"%`).all();
+      const stmts = [];
+      let moved = 0, dropped = 0;
+      for (const row of results) {
+        const res = mergeMemberInRecord(recordOut(row), mem.id, target.id);
+        if (!res.changed) continue;
+        moved++;
+        if (res.drop && !row.deleted) { dropped++; stmts.push(env.DB.prepare('UPDATE records SET deleted = 1, updated_at = ? WHERE id = ?').bind(now(), row.id)); }
+        else stmts.push(env.DB.prepare('UPDATE records SET payer_id = ?, split = ?, updated_at = ? WHERE id = ?').bind(res.rec.payerId, JSON.stringify(res.rec.split), now(), row.id));
+      }
+      if (!target.line_user_id && mem.line_user_id) stmts.push(env.DB.prepare('UPDATE members SET line_user_id = ?, avatar = ? WHERE id = ?').bind(mem.line_user_id, mem.avatar || '', target.id));
+      const hasPay = (j) => Object.values(JSON.parse(j || '{}')).some(Boolean);
+      if (!hasPay(target.pay_info) && hasPay(mem.pay_info)) stmts.push(env.DB.prepare('UPDATE members SET pay_info = ? WHERE id = ?').bind(mem.pay_info, target.id));
+      stmts.push(env.DB.prepare('UPDATE ledgers SET fund_custodian = ? WHERE id = ? AND fund_custodian = ?').bind(target.id, l.id, mem.id));
+      stmts.push(env.DB.prepare('DELETE FROM members WHERE id = ?').bind(mem.id));
+      await env.DB.batch(stmts);
+      await touch(env, l.id);
+      return { merged: true, moved, dropped, into: memberOut(await env.DB.prepare('SELECT * FROM members WHERE id = ?').bind(target.id).first()) };
     }
     if (seg[2] === 'claim' && m === 'POST') {
       if (mem.line_user_id && mem.line_user_id !== user.sub) throw new HttpError(409, '這位成員已被其他人認領');
