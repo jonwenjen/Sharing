@@ -417,3 +417,63 @@ body.lad-open { overflow: hidden; }
 .multi-cur.stub .mc-line { justify-content: center; }
 .cur-section { display: grid; gap: 10px; }
 .cur-section + .cur-section { margin-top: 6px; border-top: 1px dashed var(--line); padding-top: 12px; }
+
+/* ---- 記帳小技巧 ---- */
+.amount-row .plus-key { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid var(--line); background: var(--paper); font: 800 24px var(--num); color: var(--cobalt); line-height: 1; }
+.calc-hint { display: block; text-align: right; margin: -8px 6px 0; font: 700 14px var(--num); color: var(--cobalt); min-height: 0; }
+.calc-hint:empty { display: none; }
+
+/* ---- 吃什麼轉盤 ---- */
+.food-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.food-count { font-size: 14px; color: var(--muted); }
+.food-count strong { font: 800 22px var(--num); color: var(--ink); margin-right: 2px; }
+.food-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px; }
+.food-card { position: relative; display: grid; justify-items: center; gap: 2px; padding: 10px 4px 8px; min-height: 76px; border-radius: 16px; border: 2px solid var(--line); background: var(--card); opacity: .5; filter: grayscale(.7); transition: transform .12s, opacity .15s, filter .15s, border-color .15s; }
+.food-card.on { opacity: 1; filter: none; border-color: #FF9F43; background: color-mix(in srgb, #FFD23F 16%, var(--card)); box-shadow: 0 4px 0 -1px #FF9F43; }
+.food-card:active { transform: scale(.94); }
+.food-emoji { font-size: 28px; line-height: 1.1; }
+.food-name { font-size: 12.5px; font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 2px; }
+.food-del { position: absolute; top: 2px; right: 6px; font-size: 16px; color: var(--muted); }
+.food-go { font-size: 18px; min-height: 56px; background: linear-gradient(135deg, #FF5C7A, #FF9F43) !important; box-shadow: 0 10px 22px -10px rgba(255,92,122,.8); }
+.food-go:disabled { opacity: .45; box-shadow: none; }
+.food-stage { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; align-items: center; gap: 10px; overflow-y: auto;
+  padding: calc(10px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  background: radial-gradient(circle at 20% 15%, rgba(255,255,255,.35) 0 3px, transparent 4px) 0 0/34px 34px, linear-gradient(160deg, #FF5C7A 0%, #FF9F43 55%, #FFD23F 100%);
+  color: #fff; opacity: 0; transform: scale(1.03); transition: opacity .22s, transform .22s; }
+.food-stage.open { opacity: 1; transform: none; }
+.fw-head { width: 100%; max-width: 560px; display: flex; align-items: center; justify-content: space-between; }
+.fw-head strong { display: block; font: 800 24px var(--num); text-shadow: 0 3px 0 rgba(0,0,0,.12); }
+.fw-head small { font-size: 13px; opacity: .9; }
+.fw-close { color: #fff; background: rgba(255,255,255,.2); }
+.fw-wheel-wrap { position: relative; margin-top: 18px; filter: drop-shadow(0 14px 20px rgba(120,30,0,.35)); }
+.fw-svg { display: block; overflow: visible; }
+.fw-emoji { user-select: none; }
+.fw-label { fill: #fff; font: 800 12px var(--body); paint-order: stroke; stroke: rgba(0,0,0,.18); stroke-width: 2px; }
+.fw-lights circle { fill: #FFF6D6; }
+.spinning .fw-lights circle.even { animation: blink .35s steps(1) infinite; }
+.spinning .fw-lights circle.odd { animation: blink .35s steps(1) infinite .175s; }
+@keyframes blink { 50% { fill: #FF5C7A; } }
+.fw-pointer { position: absolute; left: 50%; top: -22px; transform: translateX(-50%); width: 48px; height: 56px; display: grid; justify-items: center; }
+.fw-pointer::after { content: ''; width: 0; height: 0; border-left: 12px solid transparent; border-right: 12px solid transparent; border-top: 20px solid #fff; margin-top: -4px; filter: drop-shadow(0 2px 2px rgba(0,0,0,.2)); }
+.fw-face { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: #fff; font-size: 28px; box-shadow: 0 4px 10px rgba(0,0,0,.15); }
+.spinning .fw-face { animation: wobble .4s ease-in-out infinite; }
+@keyframes wobble { 50% { transform: rotate(-12deg) scale(1.08); } }
+.fw-hub { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 76px; height: 76px; border-radius: 50%; border: 5px solid #fff; background: linear-gradient(145deg, #FF3D6E, #FF7A3D); color: #fff; font: 800 24px var(--num); box-shadow: 0 6px 0 #C2254B, 0 10px 18px rgba(0,0,0,.25); }
+.fw-hub:active { transform: translate(-50%, -46%); box-shadow: 0 2px 0 #C2254B; }
+.spinning .fw-hub { pointer-events: none; opacity: .85; }
+.fw-tip { margin: 6px 0 0; font-weight: 700; text-shadow: 0 1px 0 rgba(0,0,0,.15); min-height: 1.4em; }
+.fw-result { width: 100%; max-width: 420px; transform: translateY(24px) scale(.96); opacity: 0; transition: .35s cubic-bezier(.2,1.4,.4,1); pointer-events: none; }
+.fw-result.show { transform: none; opacity: 1; pointer-events: auto; }
+.fw-card { background: #fff; color: #3A2A1F; border-radius: 24px; padding: 16px; text-align: center; box-shadow: 0 16px 30px -12px rgba(120,30,0,.5); display: grid; gap: 4px; }
+.fw-big { font-size: 64px; line-height: 1; animation: pop .6s cubic-bezier(.2,1.6,.4,1); }
+@keyframes pop { from { transform: scale(.2) rotate(-30deg); } to { transform: none; } }
+.fw-say { margin: 4px 0 0; font-size: 14px; color: #9A6B50; font-weight: 700; }
+.fw-name { margin: 0 0 8px; font: 800 30px var(--num); color: #FF3D6E; }
+.fw-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.fw-actions .btn.primary { background: linear-gradient(135deg, #FF5C7A, #FF9F43); flex-basis: 100%; }
+.fw-actions .btn.ghost { background: #FFF4E6; border-color: #FFD8A8; color: #7A4A20; }
+.fw-actions .btn.text { color: #9A6B50; }
+.fw-confetti { position: fixed; left: 50%; top: 45%; pointer-events: none; z-index: 3; }
+.fw-confetti i { position: absolute; width: 9px; height: 14px; border-radius: 3px; animation: fwc 1.2s cubic-bezier(.2,.8,.3,1) forwards; }
+@keyframes fwc { from { transform: translate(0,0) rotate(0); opacity: 1; } 70% { opacity: 1; } to { transform: translate(var(--x), calc(var(--y) + 380px)) rotate(var(--r)); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .spinning .fw-face, .spinning .fw-lights circle { animation: none; } }
