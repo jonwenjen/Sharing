@@ -1,7 +1,7 @@
 // 資料層：遠端（Cloudflare Worker）或示範模式（localStorage），兩者介面相同
 import { CONFIG } from './config.js';
 import { line } from './line.js';
-import { settlementBalances } from './money.js';
+import { settlementBalances, mergeMemberInRecord } from './money.js';
 import { runLadder } from './ladder.js';
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '') : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 16);
@@ -37,6 +37,7 @@ const remote = {
   addMember: (lid, d) => call('POST', `/api/ledgers/${lid}/members`, d),
   updateMember: (mid, p) => call('PATCH', `/api/members/${mid}`, p),
   claimMember: (mid) => call('POST', `/api/members/${mid}/claim`),
+  mergeMember: (mid, into) => call('POST', `/api/members/${mid}/merge`, { into }),
   removeMember: (mid) => call('DELETE', `/api/members/${mid}`),
   addRecord: (lid, r) => call('POST', `/api/ledgers/${lid}/records`, r),
   updateRecord: (rid, p) => call('PATCH', `/api/records/${rid}`, p),
@@ -134,6 +135,25 @@ const demo = {
     const saved = (db.profiles || {})[me()];
     if (saved && !Object.values(m.payInfo || {}).some(Boolean)) m.payInfo = { ...saved };
     return m;
+  }),
+  mergeMember: (mid, into) => mutate((db) => {
+    const src = db.members.find((x) => x.id === mid);
+    const dst = db.members.find((x) => x.id === into);
+    if (!src || !dst || src.ledgerId !== dst.ledgerId || src.id === dst.id) throw new Error('請選擇同一本帳本裡的另一位成員');
+    if (src.lineUserId && dst.lineUserId && src.lineUserId !== dst.lineUserId) throw new Error('這兩位成員綁定了不同的 LINE 帳號，不能合併');
+    let moved = 0, dropped = 0;
+    db.records.forEach((r, i) => {
+      if (r.ledgerId !== src.ledgerId) return;
+      const res = mergeMemberInRecord(r, mid, into);
+      if (!res.changed) return;
+      moved++;
+      if (res.drop && !r.deleted) { dropped++; db.records[i] = { ...res.rec, deleted: 1 }; } else db.records[i] = res.rec;
+    });
+    if (!dst.lineUserId && src.lineUserId) { dst.lineUserId = src.lineUserId; dst.avatar = src.avatar; }
+    if (!Object.values(dst.payInfo || {}).some(Boolean) && Object.values(src.payInfo || {}).some(Boolean)) dst.payInfo = { ...src.payInfo };
+    db.ledgers.forEach((l) => { if (l.fundCustodian === mid) l.fundCustodian = into; });
+    db.members = db.members.filter((x) => x.id !== mid);
+    return { merged: true, moved, dropped, into: dst };
   }),
   removeMember: (mid) => mutate((db) => {
     const used = db.records.some((r) => !r.deleted && (r.payerId === mid || (r.split && r.split.parts && mid in r.split.parts)));

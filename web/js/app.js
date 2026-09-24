@@ -4,10 +4,11 @@ import { store } from './store.js';
 import { h, mount, fitText, emptyArt, skeleton, icon, avatar, toast, sheet, confirmBox, copyText, download } from './ui.js';
 import {
   CURRENCIES, CATEGORIES, FUND_ID, categoryOf, formatMoney, formatMinor, fromMinor, decimalsOf, recordShares, amountSplit,
-  settlementBalances, fundCash, stats, validateRecord, currencyGroups,
+  settlementBalances, fundCash, stats, validateRecord, currencyGroups, guessCategory, evalAmount,
 } from './money.js';
 import { minTransfers } from './settle.js';
 import { ladderSetup } from './ladderui.js';
+import { foodSetup } from './foodwheel.js';
 import { recordFlex, inviteFlex, settleAllText, recordsCsv, summaryCsv, describeRecord } from './messages.js';
 
 const S = { ledger: null, members: [], records: [], meId: null, tab: 'list', rates: {}, scope: 'all', cur: null, groupId: null, filter: { kind: 'all', cat: null, date: null }, flash: null };
@@ -183,6 +184,19 @@ function helpSheet() {
       '按「開始」後倒數 3、2、1，所有人同時出發；橫線和終點全程蓋住，路徑走到哪才亮到哪，約 5 秒揭曉。',
       '結果可以分享到連結的 LINE 群組（每次只能分享一次）、複製，或再來一次。',
     ]),
+    sec('吃什麼轉盤（右上角轉盤圖示）', [
+      '內建 40 種常見小吃與餐點，預設全選；可以一鍵全選、全部取消，或點卡片挑掉不想吃的。',
+      '也能加入自己的選項（例如巷口那家麵店），選擇會記在這支手機上，下次打開還在。',
+      '按「轉起來」後點中間的「轉！」，停下來就揭曉。不喜歡可以「再轉一次」，或「不要這個」拿掉後重轉。',
+      '選好後按「就吃這個，記一筆」，會直接打開記帳並填好項目名稱。',
+    ]),
+    sec('記帳小技巧', [
+      '金額可以直接輸入算式，例如 <code>1200+350</code>，旁邊的「+」鍵可以快速加上另一筆。',
+      '項目名稱打「晚餐」「咖啡」等字，分類會自動幫你選好。',
+      '新增時會記住上一次的付款人、幣別和分攤的人。',
+      '打開一筆支出，按「複製成新的一筆」，適合每晚住宿這種重複的花費。',
+      '同一個人重複加入時，到成員資料按「和另一位成員合併」，紀錄會移過去、金額不變。',
+    ]),
     sec('帳本設定（右上角齒輪）', [
       '修改名稱、固定匯率、預設是否分享到 LINE。',
       '<b>不同幣別合併結算</b>（預設開啟）：開啟時全部換算成結算幣別一起算；關閉後各幣別分開結算與統計、不換匯，結算和統計頁可以切換幣別。',
@@ -295,6 +309,7 @@ function renderLedger() {
       h('h1', { class: 'top-title' }, S.ledger.name),
       h('div', { class: 'top-actions' },
         h('button', { class: 'icon-btn', 'aria-label': '爬梯子', onclick: openLadder }, icon('ladder')),
+        h('button', { class: 'icon-btn', 'aria-label': '吃什麼轉盤', onclick: () => foodSetup({ onPick: (name) => (S.ledger.archived ? toast('帳本已封存，無法新增') : editor(null, null, { preset: { title: name, category: guessCategory(name) === 'other' ? 'food' : guessCategory(name) } })) }) }, icon('wheel')),
         h('button', { class: 'icon-btn', 'aria-label': '使用說明', onclick: helpSheet }, icon('help')),
         h('button', { class: 'icon-btn', 'aria-label': '帳本設定', onclick: settingsSheet }, icon('gear')))),
     h('main', { class: 'ledger' },
@@ -628,11 +643,30 @@ function memberSheet(m) {
       close(); reload();
     } }, '儲存'),
     !m.lineUserId && m.id !== S.meId ? h('button', { class: 'btn ghost block', onclick: async () => { await run(() => store.claimMember(m.id), `你現在是 ${m.name}`); close(); reload(); } }, icon('user', 18), '這是我') : null,
+    S.members.filter((x) => x.id !== m.id).length ? h('button', { class: 'btn ghost block', onclick: () => { close(); mergeSheet(m); } }, '👥 和另一位成員合併（重複加入時用）') : null,
     m.active ? h('button', { class: 'btn text-danger block', onclick: async () => {
       if (!(await confirmBox(`移除 ${m.name}？已有紀錄的成員會改為停用，帳目不受影響。`, '移除', { danger: true }))) return;
       const r = await run(() => store.removeMember(m.id));
       toast(r.archived ? `${m.name} 已停用` : `已移除 ${m.name}`); close(); reload();
     } }, icon('trash', 18), '移除成員') : h('button', { class: 'btn ghost block', onclick: async () => { await run(() => store.updateMember(m.id, { active: 1 }), '已恢復'); close(); reload(); } }, '恢復成員')));
+}
+
+/** 合併重複的成員：把 m 的紀錄、LINE 綁定都移到選擇的成員身上 */
+function mergeSheet(m) {
+  const others = S.members.filter((x) => x.id !== m.id);
+  const conflict = (x) => m.lineUserId && x.lineUserId && m.lineUserId !== x.lineUserId;
+  const count = S.records.filter((r) => r.payerId === m.id || (r.split && r.split.parts && m.id in r.split.parts)).length;
+  const close = sheet(`合併「${m.name}」`, h('div', { class: 'form' },
+    h('p', { class: 'hint' }, `常見情況：朋友點邀請連結時按了「我不在名單上」，結果同一個人出現兩次。選擇要保留的那一位，「${m.name}」的 ${count} 筆紀錄都會移過去，金額分配不變，然後「${m.name}」會被移除。`),
+    h('ul', { class: 'member-list' }, others.map((x) => h('li', {}, h('button', {
+      class: `member ${conflict(x) ? '' : ''}`, disabled: conflict(x),
+      onclick: async () => {
+        if (!(await confirmBox(`把「${m.name}」併入「${x.name}」？這個動作無法復原。`, '合併', { danger: true }))) return;
+        const res = await run(() => store.mergeMember(m.id, x.id));
+        toast(`已合併：${res.moved} 筆紀錄移到「${x.name}」${res.dropped ? `，移除 ${res.dropped} 筆自己轉給自己的轉帳` : ''}`);
+        close(); reload();
+      },
+    }, avatar(x, 36), h('span', { class: 'rec-main' }, h('strong', {}, x.name), h('small', {}, conflict(x) ? '已綁定不同的 LINE 帳號，不能合併' : x.lineUserId ? '已綁定 LINE' : '尚未綁定')), icon('arrow', 16)))))));
 }
 
 function identitySheet({ required = false } = {}) {
@@ -712,20 +746,41 @@ function settingsSheet() {
 }
 
 // ============ 記帳編輯器 ============
-function editor(rec, presetType) {
+// 記住這本帳本上一次記帳的付款人、幣別、分攤的人（只存在這支手機）
+const LAST_KEY = () => `sharing-last-${S.ledger.id}`;
+const loadLast = () => { try { return JSON.parse(localStorage.getItem(LAST_KEY())) || null; } catch { return null; } };
+const saveLast = (v) => { try { localStorage.setItem(LAST_KEY(), JSON.stringify(v)); } catch { /* 無痕模式 */ } };
+
+function editor(rec, presetType, { copyOf = null, preset = null } = {}) {
   const editing = !!rec;
   const b = base();
   const members = activeMembers();
-  const r = rec ? structuredClone(rec) : {
-    type: presetType || 'expense', title: '', category: 'food', amount: '', currency: S._lastCur || b, rate: 1,
-    payerId: S.meId || (members[0] || {}).id, date: today(), note: '',
-    split: { mode: 'equal', parts: Object.fromEntries(members.map((m) => [m.id, true])) },
+  const ids = new Set(members.map((m) => m.id));
+  const last = !editing && !copyOf && !presetType ? loadLast() : null;
+  const lastParts = last && Array.isArray(last.parts) ? last.parts.filter((id) => ids.has(id)) : [];
+  const r = rec ? structuredClone(rec) : copyOf ? { ...structuredClone(copyOf), date: today() } : {
+    type: presetType || 'expense', title: '', category: 'food', amount: '', currency: (last && last.currency) || S._lastCur || b, rate: 1,
+    payerId: last && (ids.has(last.payerId) || last.payerId === FUND_ID) ? last.payerId : S.meId || (members[0] || {}).id, date: today(), note: '',
+    split: { mode: 'equal', parts: Object.fromEntries((lastParts.length ? lastParts : members.map((m) => m.id)).map((id) => [id, true])) },
   };
+  if (preset) Object.assign(r, preset);
+  if (copyOf) delete r.id;
+  let catTouched = editing || !!copyOf || !!(preset && preset.category);
   if (r.type === 'fund_in') r.split = { mode: 'equal', parts: { [FUND_ID]: true } };
   const box = h('div', { class: 'form editor' });
   const shareBox = shareToggle();
 
-  const amount = h('input', { class: 'amount-input', inputmode: 'decimal', placeholder: '0', value: r.amount, 'aria-label': '金額', oninput: () => { r.amount = amount.value; drawSplit(); drawRate(); } });
+  // 金額可以輸入算式，例如 1200+350
+  const calc = h('small', { class: 'calc-hint', 'aria-live': 'polite' });
+  const onAmount = () => {
+    const raw = amount.value;
+    const v = evalAmount(raw);
+    r.amount = v == null ? '' : v;
+    calc.textContent = /[+\-*/×÷]/.test(raw.replace(/^-/, '')) && v != null ? `= ${formatMoney(v, r.currency)}` : '';
+    drawSplit(); drawRate();
+  };
+  const amount = h('input', { class: 'amount-input', inputmode: 'decimal', placeholder: '0', value: r.amount, 'aria-label': '金額', oninput: onAmount });
+  const plusBtn = h('button', { class: 'plus-key', type: 'button', 'aria-label': '加號：再加一筆', onclick: () => { amount.value = `${amount.value}+`; amount.focus(); onAmount(); } }, '+');
   const cur = currencySelect(r.currency, true);
   cur.onchange = async () => { r.currency = cur.value; S._lastCur = cur.value; rateSrc = ''; await ensureRate({ force: true }); drawRate(); drawSplit(); };
   const rateBox = h('div', {});
@@ -772,7 +827,14 @@ function editor(rec, presetType) {
       draw();
     } }, label)));
 
-  const title = h('input', { class: 'input', placeholder: '項目名稱，例如：晚餐', value: r.title, maxlength: 40, oninput: () => (r.title = title.value) });
+  const title = h('input', { class: 'input', placeholder: '項目名稱，例如：晚餐', value: r.title, maxlength: 40, oninput: () => {
+    r.title = title.value;
+    // 依項目名稱自動選分類（手動點過分類就不再自動改）
+    if (!catTouched) {
+      const g = guessCategory(r.title);
+      if (g !== 'other' && g !== r.category) { r.category = g; box.querySelectorAll('.chips.cats .chip').forEach((el) => el.classList.toggle('on', el.dataset.cat === g)); }
+    }
+  } });
   const date = h('input', { class: 'input', type: 'date', value: r.date, onchange: async () => {
     r.date = date.value;
     if (r.currency !== b && rateSrc !== 'manual') { await ensureRate({ force: true }); drawRate(); drawSplit(); }
@@ -855,15 +917,17 @@ function editor(rec, presetType) {
     const toId = r.type === 'transfer' ? Object.keys(r.split.parts)[0] : null;
     mount(box,
       typeSeg,
-      h('div', { class: 'amount-row' }, cur, amount),
+      h('div', { class: 'amount-row' }, cur, amount, plusBtn),
+      calc,
       rateBox,
-      r.type === 'expense' ? [field('項目', title), h('div', { class: 'chips cats' }, CATEGORIES.map((c) => h('button', { class: `chip ${r.category === c.id ? 'on' : ''}`, onclick: () => { r.category = c.id; draw(); } }, `${c.icon} ${c.name}`)))] : null,
+      r.type === 'expense' ? [field('項目', title), h('div', { class: 'chips cats' }, CATEGORIES.map((c) => h('button', { class: `chip ${r.category === c.id ? 'on' : ''}`, 'data-cat': c.id, onclick: () => { r.category = c.id; catTouched = true; draw(); } }, `${c.icon} ${c.name}`)))] : null,
       h('div', {}, h('span', { class: 'field-label' }, r.type === 'expense' ? '誰先付的' : r.type === 'transfer' ? '誰轉出' : '誰存入'),
         personChips(r.payerId, (id) => { r.payerId = id; if (r.type === 'transfer' && r.split.parts[id] !== undefined) r.split.parts = {}; draw(); }, { withFund: r.type === 'expense' && !!S.ledger.fundEnabled })),
       r.type === 'transfer' ? h('div', {}, h('span', { class: 'field-label' }, '轉給誰'), personChips(toId, (id) => { r.split.parts = { [id]: r.amount || 0 }; draw(); }, { exclude: r.payerId })) : null,
       splitBox,
       moreBox(),
       h('button', { class: 'btn primary block', onclick: saveIt }, editing ? '儲存修改' : '記下這筆'),
+      editing && r.type === 'expense' ? h('button', { class: 'btn ghost block', onclick: () => { close(); editor(null, null, { copyOf: rec }); } }, icon('copy', 18), '複製成新的一筆（日期改成今天）') : null,
       editing ? h('button', { class: 'btn text-danger block', onclick: deleteIt }, icon('trash', 18), '刪除這筆') : null);
     drawSplit();
   }
@@ -875,6 +939,7 @@ function editor(rec, presetType) {
     if (out.currency !== b && !(out.rate > 0)) errs.push('請輸入匯率');
     if (errs.length) return toast(errs[0], 'err');
     const saved = await run(() => (editing ? store.updateRecord(rec.id, out) : store.addRecord(S.ledger.id, out)), editing ? '已儲存修改' : '已記下');
+    if (!editing && out.type === 'expense') saveLast({ payerId: out.payerId, currency: out.currency, parts: out.split.mode === 'equal' ? Object.keys(out.split.parts).filter((k) => out.split.parts[k]) : null });
     close();
     if (shareBox.on()) await shareRecord(editing ? 'update' : 'create', { ...out, ...saved });
     S.flash = saved.id;

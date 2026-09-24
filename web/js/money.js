@@ -212,3 +212,62 @@ export function stats(records, base) {
   }
   return { total, byCategory, people };
 }
+
+/**
+ * 合併成員：把紀錄裡的 from 換成 to，金額分配維持不變。
+ * 回傳 { rec, changed, drop }；drop=true 表示這筆變成「自己轉給自己」，應刪除。
+ */
+export function mergeMemberInRecord(rec, from, to) {
+  const parts = { ...((rec.split && rec.split.parts) || {}) };
+  const inPayer = rec.payerId === from;
+  const inParts = Object.prototype.hasOwnProperty.call(parts, from);
+  if (!inPayer && !inParts) return { rec, changed: false, drop: false };
+  const out = { ...rec, split: { ...rec.split } };
+  if (inPayer) out.payerId = to;
+  if (inParts) {
+    const mode = out.split.mode || 'equal';
+    const a = parts[from];
+    delete parts[from];
+    if (Object.prototype.hasOwnProperty.call(parts, to)) {
+      const b = parts[to];
+      if (mode === 'equal') {
+        // 兩人都有參與平分 → 改成份數，讓其他人的金額不變
+        const on = (v) => v === true || Number(v) > 0;
+        const np = {};
+        for (const [k, v] of Object.entries(parts)) if (on(v)) np[k] = 1;
+        np[to] = (on(a) ? 1 : 0) + (on(b) ? 1 : 0);
+        out.split = { ...out.split, mode: 'shares', parts: np };
+      } else if (mode === 'amount') {
+        const blankA = a === '' || a == null, blankB = b === '' || b == null;
+        parts[to] = blankA && blankB ? '' : (Number(blankA ? 0 : a) || 0) + (Number(blankB ? 0 : b) || 0);
+        out.split.parts = parts;
+      } else {
+        parts[to] = (Number(a) || 0) + (Number(b) || 0);
+        out.split.parts = parts;
+      }
+    } else {
+      parts[to] = a;
+      out.split.parts = parts;
+    }
+  }
+  const ids = Object.keys(out.split.parts || {});
+  const drop = out.type === 'transfer' && ids.length === 1 && ids[0] === out.payerId;
+  return { rec: out, changed: true, drop };
+}
+
+/** 安全計算金額算式（只允許數字與 + - * / 括號），失敗回傳 null */
+export function evalAmount(text) {
+  const t = String(text || '').replace(/[，,\s]/g, '').replace(/[×xX]/g, '*').replace(/÷/g, '/').replace(/＋/g, '+').replace(/－/g, '-');
+  if (!t) return null;
+  if (!/^[0-9.+\-*/()]+$/.test(t)) return null;
+  let i = 0;
+  const num = () => { const m = /^\d+(\.\d+)?|^\.\d+/.exec(t.slice(i)); if (!m) throw 0; i += m[0].length; return parseFloat(m[0]); };
+  const factor = () => {
+    if (t[i] === '-') { i++; return -factor(); }
+    if (t[i] === '(') { i++; const v = expr(); if (t[i] !== ')') throw 0; i++; return v; }
+    return num();
+  };
+  const term = () => { let v = factor(); while (t[i] === '*' || t[i] === '/') { const op = t[i++]; const r = factor(); v = op === '*' ? v * r : v / r; } return v; };
+  const expr = () => { let v = term(); while (t[i] === '+' || t[i] === '-') { const op = t[i++]; const r = term(); v = op === '+' ? v + r : v - r; } return v; };
+  try { const v = expr(); if (i !== t.length || !Number.isFinite(v)) return null; return Math.round(v * 100) / 100; } catch { return null; }
+}
