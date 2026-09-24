@@ -16,44 +16,81 @@ with sync_playwright() as p:
     pg.goto('http://127.0.0.1:8771/index.html'); pg.get_by_text('東京五日遊').click()
     pg.get_by_role('dialog').get_by_text('小安', exact=True).click(); pg.wait_for_timeout(400)
 
-    # ---- 吃什麼轉盤
+    # ---- 吃什麼轉盤：大項 → 細項 → 轉盤 → 回主畫面
+    # 舊版偏好（一層清單）要能轉過來：剉冰被取消、自訂的阿婆麵攤歸到餐點
+    pg.evaluate("localStorage.removeItem('sharing-food-v2'); localStorage.setItem('sharing-food-v1', JSON.stringify({off:['剉冰'], custom:['阿婆麵攤']}))")
     pg.get_by_role('button', name='吃什麼轉盤').click()
     d = pg.get_by_role('dialog', name='吃什麼轉盤')
-    cards = d.locator('.food-card')
-    assert cards.count() >= 30, cards.count()
-    expect(d.locator('.food-card.on')).to_have_count(cards.count())        # 預設全選
-    shot('40-food-setup')
+    tabs = d.get_by_role('tab')
+    expect(tabs).to_have_count(4)
+    for n in ['餐點', '小吃', '飲料', '甜點']: expect(d.get_by_role('tab', name=n)).to_be_visible()
+    expect(d.get_by_role('tab', name='餐點')).to_have_attribute('aria-selected', 'true')
+    for n in ['麥當勞', '肯德基', '7-ELEVEN', '全家', '阿婆麵攤']: expect(d.get_by_role('button', name=n, exact=True)).to_be_visible()
+    shot('40-food-meal')
+    # 飲料：南部品牌
+    d.get_by_role('tab', name='飲料').click()
+    expect(d.get_by_role('tab', name='飲料')).to_have_attribute('aria-selected', 'true')
+    for n in ['50嵐', '清心福全', '迷客夏', '茶の魔手', '珍珠奶茶']: expect(d.get_by_role('button', name=n, exact=True)).to_be_visible()
+    expect(d.get_by_role('button', name='麥當勞', exact=True)).to_have_count(0)
+    shot('41-food-drink')
+    # 甜點：舊版取消的剉冰仍是取消
+    d.get_by_role('tab', name='甜點').click()
+    expect(d.get_by_role('button', name='剉冰', exact=True)).to_have_attribute('aria-pressed', 'false')
+    d.get_by_role('button', name='✅ 全選').click()
+    expect(d.get_by_role('button', name='剉冰', exact=True)).to_have_attribute('aria-pressed', 'true')
+    # 回到飲料：全部取消 → 不能轉；只留兩個
+    d.get_by_role('tab', name='飲料').click()
     d.get_by_role('button', name='⬜ 全部取消').click()
     expect(d.locator('.food-card.on')).to_have_count(0)
-    expect(d.get_by_role('button', name='🎡 轉起來！')).to_be_disabled()
-    d.get_by_role('button', name='✅ 全選').click()
-    expect(d.locator('.food-card.on')).to_have_count(cards.count())
-    d.get_by_role('button', name='剉冰', exact=True).click()                            # 取消一個
-    expect(d.locator('.food-count strong')).to_have_text(str(cards.count() - 1))
-    d.get_by_placeholder('加入自己的選項，例如：巷口麵店').fill('阿婆麵攤'); d.get_by_role('button', name='加入').click()
-    expect(d.get_by_role('button', name='阿婆麵攤', exact=True)).to_have_attribute('aria-pressed', 'true')
-    d.get_by_role('button', name='🎡 轉起來！').click()
+    expect(d.get_by_role('button', name='🎡 轉飲料！')).to_be_disabled()
+    d.get_by_role('button', name='全選南部起家').click()
+    expect(d.locator('.food-card.on')).to_have_count(7)
+    d.get_by_role('button', name='樺達奶茶', exact=True).click()
+    expect(d.locator('.food-count strong')).to_have_text('6')
+    d.get_by_placeholder('加入自己的選項，例如：巷口麵店').fill('巷口紅茶'); d.get_by_role('button', name='加入').click()
+    expect(d.get_by_role('button', name='巷口紅茶', exact=True)).to_have_attribute('aria-pressed', 'true')
+    d.get_by_role('button', name='🎡 轉飲料！').click()
     stage = pg.locator('.food-stage'); expect(stage).to_be_visible()
-    shot('41-food-wheel')
+    expect(stage).to_contain_text('今天喝什麼')
+    shot('42-food-wheel')
     pg.get_by_role('button', name='轉動轉盤').click()
-    pg.wait_for_timeout(1500); shot('42-food-spinning')
+    pg.wait_for_timeout(1500); shot('43-food-spinning')
     expect(pg.locator('.fw-result.show')).to_be_visible(timeout=7000)
     name = pg.locator('.fw-name').inner_text().rstrip('！')
-    assert name != '剉冰', '取消的選項不該被轉到'
-    shot('43-food-result')
+    assert name in ['50嵐', '清心福全', '迷客夏', '茶の魔手', '翰林茶館', '雙全紅茶', '巷口紅茶'], name
+    shot('44-food-result')
     pg.get_by_role('button', name='🔁 再轉一次').click()
     expect(pg.locator('.fw-result.show')).to_have_count(0)
     expect(pg.locator('.fw-result.show')).to_be_visible(timeout=7000)
     name = pg.locator('.fw-name').inner_text().rstrip('！')
-    pg.get_by_role('button', name='✅ 就吃這個，記一筆').click()
+    pg.get_by_role('button', name='✅ 就選這個').click()
+    # 回到轉盤主畫面，結果在最上面，大項維持在飲料
+    d = pg.get_by_role('dialog', name='吃什麼轉盤')
+    expect(d.locator('.fw-banner')).to_contain_text(f'今天就喝{name}！')
+    expect(d.get_by_role('tab', name='飲料')).to_have_attribute('aria-selected', 'true')
+    expect(stage).to_have_count(0)
+    shot('45-food-back-main')
+    d.get_by_role('button', name='📝 就喝這個，記一筆').click()
     ed = pg.get_by_role('dialog', name='記一筆')
     expect(ed.get_by_placeholder('項目名稱，例如：晚餐')).to_have_value(name)   # 直接帶入項目
+    expect(ed.locator('.chips.cats .chip.on')).to_have_text('🧋 飲料')          # 分類跟著大項
     pg.keyboard.press('Escape'); pg.wait_for_timeout(300)
-    # 下次打開選擇還在
+    # 下次打開：停在上次的大項、選擇還在
     pg.get_by_role('button', name='吃什麼轉盤').click()
     d = pg.get_by_role('dialog', name='吃什麼轉盤')
-    expect(d.get_by_role('button', name='剉冰', exact=True)).to_have_attribute('aria-pressed', 'false')
-    expect(d.get_by_role('button', name='阿婆麵攤', exact=True)).to_be_visible()
+    expect(d.get_by_role('tab', name='飲料')).to_have_attribute('aria-selected', 'true')
+    expect(d.get_by_role('button', name='樺達奶茶', exact=True)).to_have_attribute('aria-pressed', 'false')
+    expect(d.get_by_role('button', name='巷口紅茶', exact=True)).to_be_visible()
+    expect(d.locator('.fw-banner')).to_have_count(0)
+    # 餐點轉盤片數多（名字沿半徑寫）
+    d.get_by_role('tab', name='餐點').click()
+    d.get_by_role('button', name='🎡 轉餐點！').click()
+    expect(pg.locator('.food-stage')).to_contain_text('今天吃什麼')
+    assert pg.locator('.fw-label').count() >= 30
+    shot('46-food-meal-wheel')
+    pg.get_by_role('button', name='回到選單').click()
+    d = pg.get_by_role('dialog', name='吃什麼轉盤')
+    expect(d.get_by_role('tab', name='餐點')).to_have_attribute('aria-selected', 'true')
     pg.keyboard.press('Escape'); pg.wait_for_timeout(300)
 
     # ---- 記帳小技巧

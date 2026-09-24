@@ -185,10 +185,11 @@ function helpSheet() {
       '結果可以分享到連結的 LINE 群組（每次只能分享一次）、複製，或再來一次。',
     ]),
     sec('吃什麼轉盤（右上角轉盤圖示）', [
-      '內建 40 種常見小吃與餐點，預設全選；可以一鍵全選、全部取消，或點卡片挑掉不想吃的。',
-      '也能加入自己的選項（例如巷口那家麵店），選擇會記在這支手機上，下次打開還在。',
-      '按「轉起來」後點中間的「轉！」，停下來就揭曉。不喜歡可以「再轉一次」，或「不要這個」拿掉後重轉。',
-      '選好後按「就吃這個，記一筆」，會直接打開記帳並填好項目名稱。',
+      '先在上方選大項：<b>餐點</b>（正餐、麥當勞等速食、超商）、<b>小吃</b>、<b>飲料</b>（50嵐、清心福全、迷客夏等南部起家品牌和常見飲品）、<b>甜點</b>。',
+      '下面會出現這個大項的細項，預設全選；可以一鍵全選、全部取消、整區全選或取消，或點卡片挑掉不想要的。',
+      '也能加入自己的選項（例如巷口那家麵店），會加在目前的大項裡；選擇會記在這支手機上，下次打開還在。',
+      '按「轉」後點中間的「轉！」，停下來就揭曉。不喜歡可以「再轉一次」，或「不要這個」拿掉後重轉。',
+      '按「就選這個」會回到轉盤主畫面，結果顯示在最上面；按「記一筆」會直接打開記帳並填好項目名稱和分類。',
     ]),
     sec('記帳小技巧', [
       '金額可以直接輸入算式，例如 <code>1200+350</code>，旁邊的「+」鍵可以快速加上另一筆。',
@@ -278,6 +279,14 @@ function groups() {
 /** 目前選到的幣別群組（分開結算時用）；找不到就用第一個 */
 const pickGroup = (gs) => gs.find((g) => g.currency === S.cur) || gs[0];
 
+// 轉盤結果 → 記一筆：飲料、甜點直接用大項的分類；餐點、小吃先猜（例如早午餐），猜不到就用餐飲
+function pickFood(name, group) {
+  if (S.ledger.archived) return toast('帳本已封存，無法新增');
+  const g = guessCategory(name);
+  const category = group && group.cat !== 'food' ? group.cat : g === 'other' || g === 'drink' || g === 'dessert' ? 'food' : g;
+  editor(null, null, { preset: { title: name, category } });
+}
+
 function renderLedger() {
   const b = base();
   const gs = groups();
@@ -309,7 +318,7 @@ function renderLedger() {
       h('h1', { class: 'top-title' }, S.ledger.name),
       h('div', { class: 'top-actions' },
         h('button', { class: 'icon-btn', 'aria-label': '爬梯子', onclick: openLadder }, icon('ladder')),
-        h('button', { class: 'icon-btn', 'aria-label': '吃什麼轉盤', onclick: () => foodSetup({ onPick: (name) => (S.ledger.archived ? toast('帳本已封存，無法新增') : editor(null, null, { preset: { title: name, category: guessCategory(name) === 'other' ? 'food' : guessCategory(name) } })) }) }, icon('wheel')),
+        h('button', { class: 'icon-btn', 'aria-label': '吃什麼轉盤', onclick: () => foodSetup({ onPick: pickFood }) }, icon('wheel')),
         h('button', { class: 'icon-btn', 'aria-label': '使用說明', onclick: helpSheet }, icon('help')),
         h('button', { class: 'icon-btn', 'aria-label': '帳本設定', onclick: settingsSheet }, icon('gear')))),
     h('main', { class: 'ledger' },

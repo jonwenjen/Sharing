@@ -477,3 +477,25 @@ body.lad-open { overflow: hidden; }
 .fw-confetti i { position: absolute; width: 9px; height: 14px; border-radius: 3px; animation: fwc 1.2s cubic-bezier(.2,.8,.3,1) forwards; }
 @keyframes fwc { from { transform: translate(0,0) rotate(0); opacity: 1; } 70% { opacity: 1; } to { transform: translate(var(--x), calc(var(--y) + 380px)) rotate(var(--r)); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .spinning .fw-face, .spinning .fw-lights circle { animation: none; } }
+
+/* 吃什麼轉盤 v1.9：大項、分區、結果橫幅 */
+.fw-groups { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.fw-group { display: grid; justify-items: center; gap: 1px; padding: 10px 2px 8px; border-radius: 18px; border: 2px solid var(--line); background: var(--card); color: var(--ink); transition: transform .12s, border-color .15s, background .15s; }
+.fw-group:active { transform: scale(.95); }
+.fw-group-icon { font-size: 28px; line-height: 1.15; }
+.fw-group-name { font-weight: 800; font-size: 15px; }
+.fw-group small { font-size: 11.5px; color: var(--muted); }
+.fw-group.on { border-color: #FF5C7A; background: color-mix(in srgb, #FF5C7A 12%, var(--card)); box-shadow: 0 4px 0 -1px #FF5C7A; }
+.fw-group.on small { color: #E0395C; }
+.food-sec { display: grid; gap: 8px; }
+.food-sec-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 800; color: var(--muted); letter-spacing: .02em; }
+.food-sec-toggle { border: 0; background: none; color: var(--cobalt); font-size: 13px; font-weight: 700; min-height: 32px; padding: 0 4px; }
+.fw-banner { display: grid; gap: 10px; padding: 12px 12px 12px 14px; border-radius: 20px; background: linear-gradient(135deg, #FFF1D6, #FFE0E7); color: #3A2A1F; box-shadow: 0 8px 18px -12px rgba(255,92,122,.9); animation: fwin .45s cubic-bezier(.2,1.4,.4,1); }
+@keyframes fwin { from { transform: translateY(-10px) scale(.94); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .fw-banner { animation: none; } }
+.fw-banner-row { display: flex; align-items: center; gap: 12px; }
+.fw-banner-row .icon-btn { align-self: flex-start; color: #9A6B50; }
+.fw-banner-emoji { font-size: 40px; line-height: 1; }
+.fw-banner-text { flex: 1; min-width: 0; display: grid; }
+.fw-banner-text small { font-size: 12px; color: #9A6B50; font-weight: 700; }
+.fw-banner-text strong { font: 800 20px var(--num); color: #E0395C; overflow-wrap: anywhere; }
