@@ -42,6 +42,7 @@ const ICONS = {
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/>',
   ladder: '<path d="M7 3v18M17 3v18M7 7h10M7 12h10M7 17h10"/>',
+  finger: '<path d="M10 13V6a1.5 1.5 0 013 0v6"/><path d="M13 11.5a1.5 1.5 0 013 0v1"/><path d="M16 12.5a1.5 1.5 0 013 0V15a6 6 0 01-6 6h-1a5 5 0 01-4-2l-2.7-3.4a1.5 1.5 0 012.3-1.9L10 16"/><path d="M7 7a4.5 4.5 0 019 0"/>',
   wheel: '<circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6L5.6 18.4"/><circle cx="12" cy="12" r="2" fill="currentColor"/>',
   help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 114 2c-.9.6-1.5 1.1-1.5 2.2M12 17h.01"/>',
 };

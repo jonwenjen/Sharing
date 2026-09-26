@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeLadder, trace, makeSlots, runLadder, summarize } from '../web/js/ladder.js';
+import { makeLadder, trace, makeSlots, runLadder, summarize, fingerDraw } from '../web/js/ladder.js';
 
 test('梯子一定一對一（2~12 人各 300 次）', () => {
   for (let n = 2; n <= 12; n++) for (let k = 0; k < 300; k++) {
@@ -41,4 +41,25 @@ test('公平性：每個人被選中的機率接近', () => {
     summarize(g).rows.filter((r) => r.slot.kind === 'hit').forEach((r) => hits[r.id]++);
   }
   for (const v of Object.values(hits)) assert.ok(v > 850 && v < 1150, JSON.stringify(hits));
+});
+
+test('手指抽籤：三種模式的結果', () => {
+  const f = fingerDraw('fate', 5, 2);
+  assert.equal(f.length, 5);
+  assert.equal(f.filter((s) => s.kind === 'hit').length, 2);
+  assert.equal(fingerDraw('fate', 2, 9).filter((s) => s.kind === 'hit').length, 1, '最多 n-1 位');
+  const p = fingerDraw('pair', 7, 3).map((s) => s.group);
+  assert.deepEqual([1, 2, 3].map((g) => p.filter((x) => x === g).length).sort(), [2, 2, 3]);
+  assert.deepEqual(fingerDraw('priority', 6).map((s) => s.rank).sort(), [1, 2, 3, 4, 5, 6]);
+  assert.throws(() => fingerDraw('fate', 1, 1));
+  assert.throws(() => fingerDraw('nope', 3, 1));
+});
+
+test('手指抽籤公平性：每根手指拿到第 1 名、被選中的機率接近', () => {
+  const first = [0, 0, 0, 0], hit = [0, 0, 0, 0];
+  for (let i = 0; i < 4000; i++) {
+    first[fingerDraw('priority', 4).findIndex((s) => s.rank === 1)]++;
+    hit[fingerDraw('fate', 4, 1).findIndex((s) => s.kind === 'hit')]++;
+  }
+  for (const v of [...first, ...hit]) assert.ok(v > 850 && v < 1150, JSON.stringify({ first, hit }));
 });

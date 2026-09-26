@@ -8,6 +8,7 @@ import {
 } from './money.js';
 import { minTransfers } from './settle.js';
 import { ladderSetup } from './ladderui.js';
+import { fingerSetup } from './fingerui.js';
 import { foodSetup } from './foodwheel.js';
 import { recordFlex, inviteFlex, settleAllText, recordsCsv, summaryCsv, describeRecord } from './messages.js';
 
@@ -184,6 +185,12 @@ function helpSheet() {
       '按「開始」後倒數 3、2、1，所有人同時出發；橫線和終點全程蓋住，路徑走到哪才亮到哪，約 5 秒揭曉。',
       '結果可以分享到連結的 LINE 群組（每次只能分享一次）、複製，或再來一次。',
     ]),
+    sec('手指抽籤（右上角手指圖示）', [
+      '大家圍著同一支手機，每人放 <b>一根手指</b> 在螢幕上，每根手指會出現不同顏色的小動物。',
+      '第一根手指放上後倒數 <b>3 秒</b>鎖定（倒數中還能加入），接著亮點在手指間亂跳，<b>5 秒內</b>揭曉。',
+      '模式和爬梯子一樣：<b>命運</b>（選出幾位）、<b>配對</b>（分成幾組，同組會連線）、<b>優先權</b>（排出順序）。',
+      '揭曉後就算放開手指，結果也會留在畫面上；按「再來一次」重新開始。沒有觸控螢幕時可以用滑鼠點一下新增一位。',
+    ]),
     sec('吃什麼轉盤（右上角轉盤圖示）', [
       '先在上方選大項：<b>餐點</b>（正餐、麥當勞等速食、超商）、<b>小吃</b>、<b>飲料</b>（50嵐、清心福全、迷客夏等南部起家品牌和常見飲品）、<b>甜點</b>。',
       '下面會出現這個大項的細項，預設全選；可以一鍵全選、全部取消、整區全選或取消，或點卡片挑掉不想要的。',
@@ -198,7 +205,7 @@ function helpSheet() {
       '打開一筆支出，按「複製成新的一筆」，適合每晚住宿這種重複的花費。',
       '同一個人重複加入時，到成員資料按「和另一位成員合併」，紀錄會移過去、金額不變。',
     ]),
-    sec('帳本設定（右上角齒輪）', [
+    sec('帳本設定（標題下方右側齒輪）', [
       '修改名稱、固定匯率、預設是否分享到 LINE。',
       '<b>不同幣別合併結算</b>（預設開啟）：開啟時全部換算成結算幣別一起算；關閉後各幣別分開結算與統計、不換匯，結算和統計頁可以切換幣別。',
       '「連結到目前的 LINE 群組」：從群組裡的機器人按鈕開啟後，可把帳本連結到那個群組。',
@@ -318,12 +325,15 @@ function renderLedger() {
       h('h1', { class: 'top-title' }, S.ledger.name),
       h('div', { class: 'top-actions' },
         h('button', { class: 'icon-btn', 'aria-label': '爬梯子', onclick: openLadder }, icon('ladder')),
-        h('button', { class: 'icon-btn', 'aria-label': '吃什麼轉盤', onclick: () => foodSetup({ onPick: pickFood }) }, icon('wheel')),
-        h('button', { class: 'icon-btn', 'aria-label': '使用說明', onclick: helpSheet }, icon('help')),
-        h('button', { class: 'icon-btn', 'aria-label': '帳本設定', onclick: settingsSheet }, icon('gear')))),
+        h('button', { class: 'icon-btn', 'aria-label': '手指抽籤', onclick: fingerSetup }, icon('finger')),
+        h('button', { class: 'icon-btn', 'aria-label': '吃什麼轉盤', onclick: () => foodSetup({ onPick: pickFood }) }, icon('wheel')))),
     h('main', { class: 'ledger' },
       S.viewer && S.viewer.isAdmin && !S.meId ? h('p', { class: 'admin-banner' }, '🔑 管理員檢視：你不是這本帳本的成員') : null,
-      h('p', { class: 'ledger-meta' }, S.ledger.groupId ? `👥 ${S.ledger.groupName || 'LINE 群組'}` : '未連結群組', `　建立者 ${S.ledger.creatorName || '—'}`),
+      h('div', { class: 'ledger-sub' },
+        h('p', { class: 'ledger-meta' }, S.ledger.groupId ? `👥 ${S.ledger.groupName || 'LINE 群組'}` : '未連結群組', `　建立者 ${S.ledger.creatorName || '—'}`),
+        h('div', { class: 'sub-actions' },
+          h('button', { class: 'icon-btn sm', 'aria-label': '使用說明', onclick: helpSheet }, icon('help', 20)),
+          h('button', { class: 'icon-btn sm', 'aria-label': '帳本設定', onclick: settingsSheet }, icon('gear', 20)))),
       ticket,
       h('nav', { class: 'tabs', role: 'tablist' }, tabs.map(([k, label]) => h('button', {
         role: 'tab', 'aria-selected': String(S.tab === k), class: S.tab === k ? 'on' : '',

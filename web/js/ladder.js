@@ -83,6 +83,15 @@ export function runLadder({ participants, mode, count }, rand = cryptoRand) {
   return { mode, count, order, ladder, slots, ends };
 }
 
+/** 手指抽籤：n 根手指各拿到一格結果（命運＝中/沒中、配對＝組別、優先權＝名次），全部隨機 */
+export function fingerDraw(mode, n, count, rand = cryptoRand) {
+  if (n < 2) throw new Error('至少要 2 根手指');
+  if (!LADDER_MODES[mode]) throw new Error('不支援的模式');
+  const slots = makeSlots(mode, n, count, rand);
+  if (mode === 'priority') for (let i = n - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [slots[i], slots[j]] = [slots[j], slots[i]]; }
+  return slots;
+}
+
 /** 整理成結果（給畫面與 LINE 訊息用） */
 export function summarize(game, nameOf = (x) => x) {
   const rows = game.order.map((p, i) => ({ id: p, name: nameOf(p), slot: game.slots[game.ends[i]] }));
