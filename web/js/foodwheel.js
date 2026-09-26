@@ -153,6 +153,12 @@ export function foodSetup(ctx = {}, { result = null } = {}) {
         h('div', { class: 'row gap' },
           h('button', { class: 'chip', onclick: () => { setOff(gid, new Set()); draw(); } }, '✅ 全選'),
           h('button', { class: 'chip', onclick: () => { setOff(gid, new Set(items.map(([n]) => n))); draw(); } }, '⬜ 全部取消'))),
+      onCount < 2 ? h('p', { class: 'hint neg' }, '至少要選 2 個才能轉喔') : null,
+      h('button', { class: 'btn primary block food-go', disabled: onCount < 2, onclick: () => {
+        const list = items.filter(([n]) => !off.has(n));
+        close();
+        foodStage(list, { ...ctx, group: gid, onDone: (res) => foodSetup(ctx, { result: res }) });
+      } }, `🎡 轉${g.name}！`),
       sectionsOf(gid).map(([title, list]) => {
         const allOn = list.every(([n]) => !off.has(n));
         return h('section', { class: 'food-sec' },
@@ -173,13 +179,7 @@ export function foodSetup(ctx = {}, { result = null } = {}) {
             } }, '×') : null);
           })));
       }),
-      h('div', { class: 'row gap' }, addInput, h('button', { class: 'btn ghost', onclick: addCustom }, icon('plus', 18), '加入')),
-      onCount < 2 ? h('p', { class: 'hint neg' }, '至少要選 2 個才能轉喔') : null,
-      h('button', { class: 'btn primary block food-go', disabled: onCount < 2, onclick: () => {
-        const list = items.filter(([n]) => !off.has(n));
-        close();
-        foodStage(list, { ...ctx, group: gid, onDone: (res) => foodSetup(ctx, { result: res }) });
-      } }, `🎡 轉${g.name}！`));
+      h('div', { class: 'row gap' }, addInput, h('button', { class: 'btn ghost', onclick: addCustom }, icon('plus', 18), '加入')));
   }
   draw();
   const close = sheet('吃什麼轉盤', body, { tall: true });
