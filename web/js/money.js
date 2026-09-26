@@ -37,7 +37,7 @@ export const CATEGORIES = [
 const CAT_WORDS = [
   ['brunch', /早午餐|早餐|brunch|早點|早午/i],
   ['dinner', /晚餐|晚飯|宵夜|dinner|居酒屋|燒肉|火鍋/i],
-  ['dessert', /甜點|蛋糕|冰淇淋|霜淇淋|布丁|鬆餅|甜食|dessert/i],
+  ['dessert', /甜點|蛋糕|冰淇淋|霜淇淋|布丁|鬆餅|甜食|dessert|亞尼克|多那之|莫凡彼|哈根達斯|cold stone|ice monster|mister donut/i],
   ['drink', /飲料|咖啡|奶茶|紅茶|綠茶|手搖|果汁|啤酒|酒|coffee|tea|星巴克|50嵐|清心|迷客夏|茶の魔手|茶之魔手|可不可|龜記|麻古|五桐號|得正|coco都可|萬波|路易莎|85度c/i],
   ['food', /午餐|餐|飯|麵|拉麵|壽司|便當|小吃|吃|麥當勞|肯德基|摩斯|漢堡|必勝客|達美樂|拿坡里|subway|頂呱呱|八方雲集/i],
   ['transport', /車|捷運|地鐵|電車|計程|uber|taxi|油|停車|機票|高鐵|新幹線|巴士|公車/i],

@@ -4,7 +4,7 @@ import { store } from './store.js';
 import { h, mount, fitText, emptyArt, skeleton, icon, avatar, toast, sheet, confirmBox, copyText, download } from './ui.js';
 import {
   CURRENCIES, CATEGORIES, FUND_ID, categoryOf, formatMoney, formatMinor, fromMinor, decimalsOf, recordShares, amountSplit,
-  settlementBalances, fundCash, stats, validateRecord, currencyGroups, guessCategory, evalAmount,
+  settlementBalances, fundCash, stats, validateRecord, currencyGroups, guessCategory, evalAmount, allocate,
 } from './money.js';
 import { minTransfers } from './settle.js';
 import { ladderSetup } from './ladderui.js';
@@ -176,7 +176,7 @@ function helpSheet() {
     sec('成員、公費、匯款資訊', [
       '<b>成員</b>分頁：分享邀請連結、新增或移除成員（有帳目的成員會改為停用）。',
       '<b>匯款資訊</b>：首頁右上角頭像填一次，所有帳本自動同步，新帳本也會自動帶入。',
-      '<b>公費</b>：開啟後指定保管人，用「存入公費」記錄大家交的錢，花費時付款人選「公費」。',
+      '<b>公費</b>：開啟後指定保管人，用「存入公費」記錄大家交的錢，花費時付款人選「公費」。「誰存入」可以複選、預設全選，勾幾位金額就平分成幾筆。',
     ]),
     sec('爬梯子（右上角梯子圖示）', [
       '公平的隨機分配：每條路徑一對一，絕對不會重複；亂數由伺服器產生，誰也改不了結果。',
@@ -775,7 +775,8 @@ function editor(rec, presetType, { copyOf = null, preset = null } = {}) {
   if (preset) Object.assign(r, preset);
   if (copyOf) delete r.id;
   let catTouched = editing || !!copyOf || !!(preset && preset.category);
-  if (r.type === 'fund_in') r.split = { mode: 'equal', parts: { [FUND_ID]: true } };
+  // 新增的「存入公費」預設全部成員一起存（誰存入可複選）；編輯既有一筆時維持單一存入人
+  if (r.type === 'fund_in') r.split = editing ? { mode: 'equal', parts: { [FUND_ID]: true } } : { mode: 'equal', parts: Object.fromEntries(members.map((m) => [m.id, true])) };
   const box = h('div', { class: 'form editor' });
   const shareBox = shareToggle();
 
@@ -786,7 +787,7 @@ function editor(rec, presetType, { copyOf = null, preset = null } = {}) {
     const v = evalAmount(raw);
     r.amount = v == null ? '' : v;
     calc.textContent = /[+\-*/×÷]/.test(raw.replace(/^-/, '')) && v != null ? `= ${formatMoney(v, r.currency)}` : '';
-    drawSplit(); drawRate();
+    drawSplit(); drawRate(); drawFundIn();
   };
   const amount = h('input', { class: 'amount-input', inputmode: 'decimal', placeholder: '0', value: r.amount, 'aria-label': '金額', oninput: onAmount });
   const plusBtn = h('button', { class: 'plus-key', type: 'button', 'aria-label': '加號：再加一筆', onclick: () => { amount.value = `${amount.value}+`; amount.focus(); onAmount(); } }, '+');
@@ -829,7 +830,7 @@ function editor(rec, presetType, { copyOf = null, preset = null } = {}) {
   const typeSeg = h('div', { class: 'seg' }, [['expense', '支出'], ['transfer', '轉帳'], ...(S.ledger.fundEnabled ? [['fund_in', '存入公費']] : [])].map(([k, label]) =>
     h('button', { class: r.type === k ? 'on' : '', onclick: () => {
       if (r.type === k) return; r.type = k;
-      if (k === 'fund_in') r.split = { mode: 'equal', parts: { [FUND_ID]: true } };
+      if (k === 'fund_in') r.split = editing ? { mode: 'equal', parts: { [FUND_ID]: true } } : { mode: 'equal', parts: Object.fromEntries(members.map((m) => [m.id, true])) };
       else if (k === 'transfer') r.split = { mode: 'amount', parts: {} };
       else r.split = { mode: 'equal', parts: Object.fromEntries(members.map((m) => [m.id, true])) };
       if (r.payerId === FUND_ID && k !== 'expense') r.payerId = S.meId || members[0].id;
@@ -850,6 +851,7 @@ function editor(rec, presetType, { copyOf = null, preset = null } = {}) {
   } });
   const note = h('input', { class: 'input', placeholder: '備註（選填）', value: r.note || '', maxlength: 120, oninput: () => (r.note = note.value) });
   const splitBox = h('div', {});
+  const fundBox = h('div', {});
   // A3：日期、備註、分享收進「更多選項」，預設收合（今天、依帳本預設分享）
   let moreOpen = editing && !!r.note;
   const moreSummary = () => `${r.date === today() ? '今天' : `${Number(r.date.slice(5, 7))}/${Number(r.date.slice(8))}`}，${shareBox.on() ? '分享到群組' : '不分享'}${r.note ? '，有備註' : ''}`;
@@ -921,6 +923,27 @@ function editor(rec, presetType, { copyOf = null, preset = null } = {}) {
     } }, allOn ? '全部取消' : '全選')), modeSeg, fillSeg, h('div', { class: 'split-list' }, rows), sum);
   }
 
+  // 新增的「存入公費」：誰存入可複選，預設全選；金額會平分給勾選的人各記一筆
+  function drawFundIn() {
+    if (editing || r.type !== 'fund_in') return fundBox.replaceChildren();
+    const parts = r.split.parts;
+    const allOn = members.every((m) => parts[m.id]);
+    const rows = members.map((m) => {
+      const on = !!parts[m.id];
+      const check = h('input', { type: 'checkbox', checked: on, 'aria-label': `${m.name} 存入`, onchange: () => {
+        if (check.checked) parts[m.id] = true; else delete parts[m.id];
+        drawFundIn();
+      } });
+      return h('label', { class: `split-row ${on ? '' : 'off'}` }, check, avatar(m, 26), h('span', { class: 'grow' }, m.name));
+    });
+    const n = members.filter((m) => parts[m.id]).length;
+    mount(fundBox, h('div', { class: 'row between' }, h('span', { class: 'field-label' }, '誰存入'), h('button', { class: 'link', onclick: () => {
+      members.forEach((m) => (allOn ? delete parts[m.id] : (parts[m.id] = true)));
+      drawFundIn();
+    } }, allOn ? '全部取消' : '全選')), h('div', { class: 'split-list' }, rows),
+    n > 1 && Number(r.amount) > 0 ? h('p', { class: 'hint' }, `金額會平分成 ${n} 筆，每人各存入約 ${formatMoney(Number(r.amount) / n, r.currency)}`) : null);
+  }
+
   function draw() {
     typeSeg.querySelectorAll('button').forEach((btn, i) => btn.className = ['expense', 'transfer', 'fund_in'][i] === r.type ? 'on' : '');
     const toId = r.type === 'transfer' ? Object.keys(r.split.parts)[0] : null;
@@ -930,8 +953,9 @@ function editor(rec, presetType, { copyOf = null, preset = null } = {}) {
       calc,
       rateBox,
       r.type === 'expense' ? [field('項目', title), h('div', { class: 'chips cats' }, CATEGORIES.map((c) => h('button', { class: `chip ${r.category === c.id ? 'on' : ''}`, 'data-cat': c.id, onclick: () => { r.category = c.id; catTouched = true; draw(); } }, `${c.icon} ${c.name}`)))] : null,
-      h('div', {}, h('span', { class: 'field-label' }, r.type === 'expense' ? '誰先付的' : r.type === 'transfer' ? '誰轉出' : '誰存入'),
-        personChips(r.payerId, (id) => { r.payerId = id; if (r.type === 'transfer' && r.split.parts[id] !== undefined) r.split.parts = {}; draw(); }, { withFund: r.type === 'expense' && !!S.ledger.fundEnabled })),
+      r.type === 'fund_in' && !editing ? fundBox
+        : h('div', {}, h('span', { class: 'field-label' }, r.type === 'expense' ? '誰先付的' : r.type === 'transfer' ? '誰轉出' : '誰存入'),
+          personChips(r.payerId, (id) => { r.payerId = id; if (r.type === 'transfer' && r.split.parts[id] !== undefined) r.split.parts = {}; draw(); }, { withFund: r.type === 'expense' && !!S.ledger.fundEnabled })),
       r.type === 'transfer' ? h('div', {}, h('span', { class: 'field-label' }, '轉給誰'), personChips(toId, (id) => { r.split.parts = { [id]: r.amount || 0 }; draw(); }, { exclude: r.payerId })) : null,
       splitBox,
       moreBox(),
@@ -939,10 +963,12 @@ function editor(rec, presetType, { copyOf = null, preset = null } = {}) {
       editing && r.type === 'expense' ? h('button', { class: 'btn ghost block', onclick: () => { close(); editor(null, null, { copyOf: rec }); } }, icon('copy', 18), '複製成新的一筆（日期改成今天）') : null,
       editing ? h('button', { class: 'btn text-danger block', onclick: deleteIt }, icon('trash', 18), '刪除這筆') : null);
     drawSplit();
+    drawFundIn();
   }
 
   async function saveIt() {
     if (r.type === 'transfer') { const to = Object.keys(r.split.parts)[0]; if (to) r.split = { mode: 'amount', parts: { [to]: Number(r.amount) } }; }
+    if (!editing && r.type === 'fund_in') return saveFundIn();
     const out = { type: r.type, title: r.title.trim() || (r.type === 'fund_in' ? '存入公費' : r.type === 'transfer' ? '轉帳' : categoryOf(r.category).name), category: r.category, amount: Number(r.amount), currency: r.currency, rate: r.currency === b ? 1 : Number(r.rate), payerId: r.payerId, split: r.split, date: r.date || today(), note: r.note || '' };
     const errs = validateRecord(out);
     if (out.currency !== b && !(out.rate > 0)) errs.push('請輸入匯率');
@@ -951,6 +977,25 @@ function editor(rec, presetType, { copyOf = null, preset = null } = {}) {
     if (!editing && out.type === 'expense') saveLast({ payerId: out.payerId, currency: out.currency, parts: out.split.mode === 'equal' ? Object.keys(out.split.parts).filter((k) => out.split.parts[k]) : null });
     close();
     if (shareBox.on()) await shareRecord(editing ? 'update' : 'create', { ...out, ...saved });
+    S.flash = saved.id;
+    reload();
+  }
+  // 新增「存入公費」且勾選多人：金額平分，各記一筆（每筆的存入人維持單一，跟既有資料格式相容）
+  async function saveFundIn() {
+    const depIds = members.filter((m) => r.split.parts[m.id]).map((m) => m.id);
+    if (!depIds.length) return toast('請至少選一位存入的人', 'err');
+    if (!(Number(r.amount) > 0)) return toast('請輸入大於 0 的金額', 'err');
+    if (r.currency !== b && !(Number(r.rate) > 0)) return toast('請輸入匯率', 'err');
+    const minorTotal = Math.round(Number(r.amount) * 10 ** decimalsOf(r.currency));
+    const shareMinor = allocate(minorTotal, Object.fromEntries(depIds.map((id) => [id, 1])));
+    let saved;
+    for (const id of depIds) {
+      const out = { type: 'fund_in', title: '存入公費', category: r.category, amount: fromMinor(shareMinor[id] || 0, r.currency), currency: r.currency, rate: r.currency === b ? 1 : Number(r.rate), payerId: id, split: { mode: 'equal', parts: { [FUND_ID]: true } }, date: r.date || today(), note: r.note || '' };
+      // eslint-disable-next-line no-await-in-loop
+      saved = await run(() => store.addRecord(S.ledger.id, out));
+    }
+    close();
+    toast(depIds.length > 1 ? `已記下：${depIds.length} 人共存入 ${formatMoney(Number(r.amount), r.currency)}` : '已記下');
     S.flash = saved.id;
     reload();
   }

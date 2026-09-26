@@ -179,5 +179,13 @@ test('品牌名稱自動分類', async () => {
   const { guessCategory } = await import('../web/js/money.js');
   for (const n of ['50嵐', '清心福全', '迷客夏', '茶の魔手', '可不可熟成紅茶', '路易莎', '85度C']) assert.equal(guessCategory(n), 'drink', n);
   for (const n of ['麥當勞', '肯德基', '摩斯漢堡', '必勝客', 'Subway', '八方雲集']) assert.equal(guessCategory(n), 'food', n);
+  for (const n of ['亞尼克', '多那之', '莫凡彼', '哈根達斯', 'Cold Stone', 'ICE MONSTER冰館', 'Mister Donut']) assert.equal(guessCategory(n), 'dessert', n);
   assert.equal(guessCategory('豆花'), 'other');
+});
+
+test('存入公費：多人各自平分後的份額加總要等於總金額', async () => {
+  const { allocate } = await import('../web/js/money.js');
+  const shares = allocate(1000, { a: 1, b: 1, c: 1 });
+  assert.equal(Object.values(shares).reduce((s, v) => s + v, 0), 1000);
+  assert.deepEqual(Object.values(shares).sort(), [333, 333, 334]);
 });

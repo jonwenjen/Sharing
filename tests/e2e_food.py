@@ -33,11 +33,14 @@ with sync_playwright() as p:
     for n in ['50嵐', '清心福全', '迷客夏', '茶の魔手', '珍珠奶茶']: expect(d.get_by_role('button', name=n, exact=True)).to_be_visible()
     expect(d.get_by_role('button', name='麥當勞', exact=True)).to_have_count(0)
     shot('41-food-drink')
-    # 甜點：舊版取消的剉冰仍是取消
+    # 甜點：舊版取消的剉冰仍是取消；也有連鎖甜點和連鎖咖啡店（甜點）分區
     d.get_by_role('tab', name='甜點').click()
     expect(d.get_by_role('button', name='剉冰', exact=True)).to_have_attribute('aria-pressed', 'false')
     d.get_by_role('button', name='✅ 全選').click()
     expect(d.get_by_role('button', name='剉冰', exact=True)).to_have_attribute('aria-pressed', 'true')
+    for n in ['亞尼克', 'Mister Donut', '莫凡彼', '哈根達斯', 'ICE MONSTER冰館']: expect(d.get_by_role('button', name=n, exact=True)).to_be_visible()
+    for n in ['85度C', '星巴克', '路易莎', '丹堤咖啡', '客美多咖啡']: expect(d.get_by_role('button', name=n, exact=True)).to_be_visible()
+    shot('41b-food-dessert')
     # 回到飲料：全部取消 → 不能轉；只留兩個
     d.get_by_role('tab', name='飲料').click()
     d.get_by_role('button', name='⬜ 全部取消').click()
