@@ -1,6 +1,7 @@
 // 手指抽籤：每人一根手指放上螢幕 → 3 秒倒數鎖定 → 5 秒內揭曉（命運／配對／優先權，模式同爬梯子）
 import { h, mount, icon, sheet } from './ui.js';
 import { LADDER_MODES, fingerDraw } from './ladder.js';
+import { sfx, buzz, sfxUnlock, sfxToggle } from './sfx.js';
 
 const FG_COLORS = ['#FF4D6D', '#FFB020', '#38D9A9', '#4DABF7', '#B197FC', '#FF8CC6', '#FFD43B', '#63E6BE', '#74C0FC', '#DA77F2', '#A9E34B', '#FF922B'];
 const FG_PETS = [['🐱', '小貓'], ['🐶', '小狗'], ['🐰', '小兔'], ['🐼', '熊貓'], ['🦊', '狐狸'], ['🐸', '青蛙'], ['🐯', '老虎'], ['🐨', '無尾熊'], ['🐷', '小豬'], ['🐵', '猴子'], ['🐧', '企鵝'], ['🐹', '倉鼠']];
@@ -9,7 +10,6 @@ const FG_MAX = FG_COLORS.length;
 const FG_KEY = 'sharing-finger-v1';
 const FG_LOCK_MS = 3000;
 const fgReduced = () => window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-const fgBuzz = (p) => { try { if (navigator.vibrate) navigator.vibrate(p); } catch { /* 不支援震動 */ } };
 const fgBounds = (mode) => (mode === 'pair' ? [2, FG_GROUP_COLORS.length] : [1, FG_MAX - 1]);
 
 /** 設定抽屜：選模式與人數／組數（參加的人數以放上來的手指為準） */
@@ -41,6 +41,7 @@ export function fingerSetup() {
       h('p', { class: 'hint' }, mode === 'priority' ? '至少要 2 根手指。' : `至少要 2 根手指；${mode === 'fate' ? '選出的人數' : '組數'}比手指多時會自動調整。人很多時，有些手機一次只偵測得到約 5 根手指。`),
       h('button', { class: 'btn primary block fg-start', onclick: () => {
         try { localStorage.setItem(FG_KEY, JSON.stringify({ mode, count })); } catch { /* 無痕模式 */ }
+        sfxUnlock();
         close();
         fingerStage({ mode, count });
       } }, '☝️ 開始手指抽籤！'));
@@ -74,7 +75,7 @@ export function fingerStage({ mode, count }) {
     pad, hero, big, flash,
     h('header', { class: 'fg-head' },
       h('div', {}, h('strong', {}, `☝️ ${LADDER_MODES[mode].name}手指抽籤`), h('small', {}, sub)),
-      h('div', { class: 'row gap' }, countChip, h('button', { class: 'icon-btn fg-close', 'aria-label': '關閉', onclick: () => finish() }, icon('x')))),
+      h('div', { class: 'row gap' }, countChip, sfxToggle(), h('button', { class: 'icon-btn fg-close', 'aria-label': '關閉', onclick: () => finish() }, icon('x')))),
     bar, prompt, result);
 
   // ---- 手指（觸控）與滑鼠（點一下新增、再點一下拿掉）
@@ -91,7 +92,8 @@ export function fingerStage({ mode, count }) {
     place(d);
     pad.append(el);
     dots.set(key, d);
-    fgBuzz(15);
+    sfx.pop(idx);
+    buzz(15);
     changed();
   }
   function removeDot(key) {
@@ -105,6 +107,7 @@ export function fingerStage({ mode, count }) {
   const collecting = () => state === 'wait' || state === 'count';
   pad.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    sfxUnlock();
     if (!collecting()) return;
     if (e.pointerType === 'mouse') {
       const hit = [...dots.values()].find((d) => d.sticky && Math.hypot(d.x - e.clientX, d.y - e.clientY) < 50);
@@ -152,7 +155,7 @@ export function fingerStage({ mode, count }) {
       const left = Math.max(0, FG_LOCK_MS - (now - cdStart));
       bar.firstChild.style.transform = `scaleX(${left / FG_LOCK_MS})`;
       const sec = Math.ceil(left / 1000);
-      if (sec !== lastBeat && sec > 0) { lastBeat = sec; beat(String(sec)); fgBuzz(10); }
+      if (sec !== lastBeat && sec > 0) { lastBeat = sec; beat(String(sec)); sfx.beep(); buzz(25); }
       if (left > 0) { raf = requestAnimationFrame(tick); return; }
       stage.classList.remove('counting');
       if (dots.size >= 2) lock();
@@ -169,7 +172,9 @@ export function fingerStage({ mode, count }) {
     stage.classList.add('locked');
     beat(`鎖定 ${list.length} 人！`);
     say('鎖定！', '接下來加入的手指不算喔');
-    fgBuzz([30, 40, 30]);
+    sfx.hit();
+    sfx.go();
+    buzz([60, 40, 60]);
     flash.classList.remove('go'); void flash.offsetWidth; flash.classList.add('go');
     later(() => shuffle(list), RM ? 200 : 650);
   }
@@ -181,6 +186,7 @@ export function fingerStage({ mode, count }) {
     stage.classList.add('drawing');
     say('抽籤中… 🔥');
     let t = 0;
+    if (!RM) sfx.riser(2.2);
     if (!RM) {
       let gap = 60, last = -1;
       while (t < 2200) {
@@ -189,7 +195,8 @@ export function fingerStage({ mode, count }) {
           do k = Math.floor(Math.random() * list.length); while (k === last);
           last = k;
           list.forEach((d, i) => d.el.classList.toggle('hot', i === k));
-          fgBuzz(8);
+          sfx.tick(k);
+          buzz(8);
         }, t);
         t += gap; gap *= 1.12;
       }
@@ -203,7 +210,7 @@ export function fingerStage({ mode, count }) {
     const step = (i, total, spread) => (RM ? 0 : i * Math.min(spread / Math.max(1, total), 380));
     if (mode === 'fate') {
       const wins = list.filter((d) => d.slot.kind === 'hit');
-      wins.forEach((d, i) => later(() => { d.el.classList.add('win'); d.badge.textContent = '🎯 就是你！'; burst(d); fgBuzz(60); }, step(i, wins.length, 1100)));
+      wins.forEach((d, i) => later(() => { d.el.classList.add('win'); d.badge.textContent = '🎯 就是你！'; burst(d); sfx.hit(); buzz([80, 40, 120]); }, step(i, wins.length, 1100)));
       end = step(wins.length - 1, wins.length, 1100);
       later(() => list.filter((d) => d.slot.kind !== 'hit').forEach((d) => { d.el.classList.add('lose'); d.badge.textContent = '😌 安全'; }), end + 150);
       end += 150;
@@ -217,7 +224,8 @@ export function fingerStage({ mode, count }) {
           d.badge.textContent = `🤝 第 ${g} 組`;
         });
         drawLinks();
-        fgBuzz(40);
+        sfx.pop(i * 3);
+        buzz([40, 30, 40]);
       }, step(i, groups.length, 1300)));
       end = step(groups.length - 1, groups.length, 1300);
     } else {
@@ -225,11 +233,11 @@ export function fingerStage({ mode, count }) {
       ranked.forEach((d, i) => later(() => {
         d.el.classList.add('ranked');
         d.badge.textContent = d.slot.rank === 1 ? '👑 第 1' : `第 ${d.slot.rank}`;
-        if (d.slot.rank === 1) { d.el.classList.add('win'); burst(d); fgBuzz(60); } else fgBuzz(15);
+        if (d.slot.rank === 1) { d.el.classList.add('win'); burst(d); sfx.hit(); buzz([80, 40, 120]); } else { sfx.pop(n - d.slot.rank); buzz(20); }
       }, step(i, n, 1400)));
       end = step(n - 1, n, 1400);
     }
-    later(() => { state = 'done'; stage.classList.add('done'); say(''); showResult(list); }, end + 550);
+    later(() => { state = 'done'; stage.classList.add('done'); say(''); showResult(list); sfx.win(); buzz([40, 60, 40, 60, 120]); }, end + 550);
   }
 
   function drawLinks() {

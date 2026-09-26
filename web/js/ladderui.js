@@ -1,6 +1,7 @@
 // 爬梯子畫面：設定（選人、選模式）＋ 盲盒模式動畫（橫線與終點全程遮蔽，沿路徑即時點亮）
 import { h, mount, icon, avatar, toast, sheet, copyText } from './ui.js';
 import { LADDER_MODES, trace, summarize, ladderText } from './ladder.js';
+import { sfx, buzz, sfxUnlock, sfxToggle } from './sfx.js';
 
 const COLORS = ['#FF4D6D', '#FFB020', '#38D9A9', '#4DABF7', '#B197FC', '#FF8CC6', '#63E6BE', '#FFD43B', '#FF922B', '#74C0FC', '#DA77F2', '#A9E34B'];
 const GROUP_COLORS = ['#FF4D6D', '#4DABF7', '#38D9A9', '#FFB020', '#B197FC', '#FF8CC6'];
@@ -47,6 +48,7 @@ export function ladderSetup(ctx) {
   };
   let close;
   async function start() {
+    sfxUnlock();
     const participants = members.filter((m) => picked.has(m.id)).map((m) => m.id);
     let game;
     try { game = await ctx.run({ participants, mode, count }); } catch (e) { toast(e.message || '無法開始', 'err'); return; }
@@ -106,7 +108,7 @@ export function ladderStage(game, ctx) {
     h('header', { class: 'lad-head-bar' },
       h('div', {}, h('strong', {}, `${titleIcon} ${LADDER_MODES[game.mode].name}爬梯子`),
         h('small', {}, game.mode === 'fate' ? `選出 ${game.slots.filter((s) => s.kind === 'hit').length} 位` : game.mode === 'pair' ? `分成 ${new Set(game.slots.map((s) => s.group)).size} 組` : `${n} 人排順序`)),
-      h('button', { class: 'icon-btn lad-close', 'aria-label': '關閉', onclick: () => finish(true) }, icon('x'))),
+      h('div', { class: 'row' }, sfxToggle(), h('button', { class: 'icon-btn lad-close', 'aria-label': '關閉', onclick: () => finish(true) }, icon('x')))),
     h('div', { class: 'lad-board' }, topRow, h('div', { class: 'lad-svg-wrap' }, svg), bottomRow),
     counter, resultBox);
   document.body.append(stage);
@@ -129,8 +131,11 @@ export function ladderStage(game, ctx) {
     box.classList.add('open', s.kind);
     box.style.setProperty('--c', s.kind === 'group' ? GROUP_COLORS[(s.group - 1) % GROUP_COLORS.length] : p.color);
     mount(box, h('span', { class: 'lad-big' }, big), h('span', { class: 'lad-small' }, small), h('span', { class: 'lad-who' }, nameOf(p.id)));
-    if (s.kind === 'hit' || (s.kind === 'rank' && s.rank === 1)) burst(box, p.color);
+    if (s.kind === 'hit' || (s.kind === 'rank' && s.rank === 1)) { burst(box, p.color); sfx.hit(); buzz([80, 40, 120]); }
+    else { sfx.pop(revealed); buzz(20); }
+    revealed++;
   }
+  let revealed = 0;
   function burst(box, color) {
     if (reduced()) return;
     for (let i = 0; i < 14; i++) {
@@ -152,6 +157,8 @@ export function ladderStage(game, ctx) {
           h('button', { class: 'btn ghost grow', onclick: async () => { let g; try { g = await ctx.again(); } catch (e) { toast(e.message, 'err'); return; } finish(true); ladderStage(g, ctx); } }, '🔁 再來一次'),
           h('button', { class: 'btn text block', onclick: () => finish(true) }, '完成'))));
     resultBox.classList.add('show');
+    sfx.win();
+    buzz([40, 60, 40, 60, 120]);
   }
 
   // ---- 動畫：倒數 → 同時出發 → 依序抵達揭曉（全程約 5 秒）
@@ -165,12 +172,16 @@ export function ladderStage(game, ctx) {
   players.forEach((p) => { p.path.style.strokeDasharray = `${p.total} ${p.total}`; p.path.style.strokeDashoffset = `${p.total}`; });
 
   const beats = RM ? [] : ['3', '2', '1', 'GO!'];
-  beats.forEach((b, i) => later(() => { counter.textContent = b; counter.classList.remove('pop'); void counter.offsetWidth; counter.classList.add('pop'); }, i * (COUNT_MS / beats.length)));
-  later(() => { counter.textContent = ''; stage.classList.add('running'); run(); }, COUNT_MS);
+  beats.forEach((b, i) => later(() => {
+    counter.textContent = b; counter.classList.remove('pop'); void counter.offsetWidth; counter.classList.add('pop');
+    if (b === 'GO!') { sfx.go(); buzz([60, 40, 60]); } else { sfx.beep(); buzz(25); }
+  }, i * (COUNT_MS / beats.length)));
+  later(() => { counter.textContent = ''; stage.classList.add('running'); if (!RM) sfx.riser(lastArrive / 1000); run(); }, COUNT_MS);
 
   function run() {
     const t0 = performance.now();
     const ease = (x) => (x < 0.5 ? 2 * x * x : 1 - (-2 * x + 2) ** 2 / 2) * 0.35 + x * 0.65;
+    let lastTick = 0;
     const frame = (now) => {
       let done = 0;
       for (const p of players) {
@@ -179,7 +190,10 @@ export function ladderStage(game, ctx) {
         p.path.style.strokeDashoffset = `${p.total - len}`;
         const pt = p.path.getPointAtLength(len);
         p.head.setAttribute('cx', pt.x); p.head.setAttribute('cy', pt.y);
-        for (const ev of p.events) if (!ev.done && len >= ev.len) { ev.done = true; rungEls[ev.rung].classList.add('on'); rungEls[ev.rung].style.stroke = p.color; }
+        for (const ev of p.events) if (!ev.done && len >= ev.len) {
+          ev.done = true; rungEls[ev.rung].classList.add('on'); rungEls[ev.rung].style.stroke = p.color;
+          if (now - lastTick > 45) { lastTick = now; sfx.tick(ev.rung); buzz(8); }
+        }
         if (t >= 1) { done++; if (!p.arrived) { p.arrived = true; p.head.classList.add('arrived'); reveal(p); } }
       }
       fog.style.opacity = String(Math.max(0, 1 - (now - t0) / lastArrive));

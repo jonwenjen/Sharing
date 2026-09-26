@@ -598,3 +598,11 @@ body.lad-open { overflow: hidden; }
 .fg-card .btn.ghost { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.2); color: #fff; }
 .fg-card .btn.primary { background: linear-gradient(135deg, #B197FC, #FF4D6D 55%, #FFB020); }
 @media (prefers-reduced-motion: reduce) { .fg-ring, .fg-hero span, .fg-hero i, .fg-intro-hand, .fg-link { animation: none !important; } }
+
+/* 音效開關、iOS 震動用的隱藏開關 */
+.ladder-stage .sfx-btn, .finger-stage .sfx-btn { color: #F4F6FF; background: rgba(255,255,255,.08); }
+.food-stage .sfx-btn { color: #fff; background: rgba(255,255,255,.2); }
+.sfx-btn[aria-pressed="false"] { opacity: .6; }
+.sfx-haptic { position: fixed; left: -100px; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; }
+.fw-pointer.bump::after { animation: fwflap .14s ease-out; transform-origin: 50% 0; }
+@keyframes fwflap { 40% { transform: rotate(-20deg); } }

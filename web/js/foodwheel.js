@@ -1,5 +1,6 @@
 // 吃什麼轉盤：選大項（餐點／小吃／飲料／甜點）→ 挑細項 → 大轉盤 → 揭曉後回到主畫面，可以直接記一筆
 import { h, mount, icon, toast, sheet } from './ui.js';
+import { sfx, buzz, sfxUnlock, sfxToggle } from './sfx.js';
 
 // 大項：cat＝「記一筆」時預設的記帳分類；sections＝細項分區 [區名, [[名稱, emoji], ...]]
 export const FOOD_GROUPS = [
@@ -156,6 +157,7 @@ export function foodSetup(ctx = {}, { result = null } = {}) {
       onCount < 2 ? h('p', { class: 'hint neg' }, '至少要選 2 個才能轉喔') : null,
       h('button', { class: 'btn primary block food-go', disabled: onCount < 2, onclick: () => {
         const list = items.filter(([n]) => !off.has(n));
+        sfxUnlock();
         close();
         foodStage(list, { ...ctx, group: gid, onDone: (res) => foodSetup(ctx, { result: res }) });
       } }, `🎡 轉${g.name}！`),
@@ -258,6 +260,7 @@ export function foodStage(items, ctx = {}) {
 
   function spin() {
     if (spinning || list.length < 2) return;
+    sfxUnlock();
     spinning = true;
     picked = null;
     stage.classList.add('spinning');
@@ -275,16 +278,44 @@ export function foodStage(items, ctx = {}) {
     const dur = fwReduced() ? 600 : 4200;
     g.style.transition = `transform ${dur}ms cubic-bezier(.12,.72,.14,1)`;
     g.style.transform = `rotate(${rotation}deg)`;
+    sfx.whoosh();
+    buzz(30);
+    tickLoop(n);
     setTimeout(() => done(list[pick]), dur + 80);
+  }
+
+  // 每轉過一格就「喀」一聲＋輕震，越轉越慢
+  function tickLoop(n) {
+    const seg = 360 / n;
+    let prev = null, acc = 0, lastAt = 0;
+    const angle = () => { const m = new DOMMatrixReadOnly(getComputedStyle(g).transform); return (Math.atan2(m.b, m.a) * 180) / Math.PI; };
+    const frame = (now) => {
+      if (!spinning || closed) return;
+      const a = angle();
+      if (prev != null) {
+        acc += (((a - prev) % 360) + 540) % 360 - 180;
+        if (Math.abs(acc) >= seg) {
+          acc %= seg;
+          if (now - lastAt > 35) { lastAt = now; sfx.tick(); buzz(6); face.classList.remove('bump'); void face.offsetWidth; face.classList.add('bump'); }
+        }
+      }
+      prev = a;
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
   }
 
   function done([name, emoji]) {
     spinning = false;
+    if (closed) return;
     picked = { name, emoji, group: grp.id };
     stage.classList.remove('spinning');
     face.firstChild.textContent = '😍';
     tip.textContent = '';
     burst();
+    sfx.hit();
+    sfx.win();
+    buzz([80, 40, 40, 60, 120]);
     mount(resultBox, h('div', { class: 'fw-card' },
       h('span', { class: 'fw-big' }, emoji),
       h('p', { class: 'fw-say' }, `今天就${grp.verb}`),
@@ -324,7 +355,7 @@ export function foodStage(items, ctx = {}) {
   const stage = h('div', { class: 'food-stage', role: 'dialog', 'aria-modal': 'true', 'aria-label': '吃什麼轉盤' },
     h('header', { class: 'fw-head' },
       h('div', {}, h('strong', {}, titles[grp.id] || titles.meal), h('small', {}, '交給命運決定！')),
-      h('button', { class: 'icon-btn fw-close', 'aria-label': '回到選單', onclick: () => finish(picked) }, icon('back'))),
+      h('div', { class: 'row' }, sfxToggle(), h('button', { class: 'icon-btn fw-close', 'aria-label': '回到選單', onclick: () => finish(picked) }, icon('back')))),
     wheelWrap, tip, resultBox);
   drawWheel();
   document.body.append(stage);
