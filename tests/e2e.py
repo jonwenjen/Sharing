@@ -70,10 +70,12 @@ with sync_playwright() as p:
     expect(dlg.locator('details.more')).not_to_have_attribute('open', '')  # A3：更多選項預設收合
     expect(dlg.locator('details.more summary')).to_contain_text('今天')
     dlg.get_by_text('更多選項').click()
-    dlg.locator('input[type=date]').fill('2026-12-06'); dlg.locator('input[type=date]').dispatch_event('change')
+    # 示範匯率依「日 % 7」微調：挑一個跟今天餘數不同的日期，才會換到不同匯率
+    other = '2026-12-06' if __import__('datetime').date.today().day % 7 != 6 else '2026-12-07'
+    dlg.locator('input[type=date]').fill(other); dlg.locator('input[type=date]').dispatch_event('change')
     pg.wait_for_timeout(300)
     assert dlg.get_by_label('匯率').input_value() != r1, '換日期要換匯率'
-    expect(dlg.locator('.rate-src')).to_contain_text('2026-12-06 當日匯率')
+    expect(dlg.locator('.rate-src')).to_contain_text(f'{other} 當日匯率')
     dlg.get_by_label('匯率').fill('0.2')
     expect(dlg.locator('.rate-src')).to_contain_text('手動輸入')
     shot('05-editor-foreign')

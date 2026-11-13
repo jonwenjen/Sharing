@@ -1,7 +1,7 @@
 // 爬梯子畫面：設定（選人、選模式）＋ 盲盒模式動畫（橫線與終點全程遮蔽，沿路徑即時點亮）
 import { h, mount, icon, avatar, toast, sheet, copyText } from './ui.js';
 import { LADDER_MODES, trace, summarize, ladderText } from './ladder.js';
-import { sfx, buzz, sfxUnlock, sfxToggle } from './sfx.js';
+import { sfx, buzz, sfxUnlock, sfxToggle, sfxRelease } from './sfx.js';
 
 const COLORS = ['#FF4D6D', '#FFB020', '#38D9A9', '#4DABF7', '#B197FC', '#FF8CC6', '#63E6BE', '#FFD43B', '#FF922B', '#74C0FC', '#DA77F2', '#A9E34B'];
 const GROUP_COLORS = ['#FF4D6D', '#4DABF7', '#38D9A9', '#FFB020', '#B197FC', '#FF8CC6'];
@@ -61,6 +61,7 @@ export function ladderSetup(ctx) {
 
 /** 全螢幕遊戲畫面 */
 export function ladderStage(game, ctx) {
+  sfxUnlock();
   const byId = Object.fromEntries(ctx.members.map((m) => [m.id, m]));
   const nameOf = (id) => (byId[id] || {}).name || '？';
   const n = game.order.length;
@@ -119,7 +120,7 @@ export function ladderStage(game, ctx) {
   const later = (fn, ms) => timers.push(setTimeout(fn, ms));
   function finish(closeIt) {
     cancelAnimationFrame(raf); timers.forEach(clearTimeout); timers = [];
-    if (closeIt) { stage.classList.remove('open'); document.body.classList.remove('lad-open'); setTimeout(() => stage.remove(), 250); }
+    if (closeIt) { sfxRelease(); stage.classList.remove('open'); document.body.classList.remove('lad-open'); setTimeout(() => stage.remove(), 250); }
   }
 
   const slotLabel = (s) => s.kind === 'hit' ? ['🎯', '命中！'] : s.kind === 'safe' ? ['😌', '安全'] : s.kind === 'group' ? ['🤝', `第 ${s.group} 組`] : [s.rank === 1 ? '👑' : `#${s.rank}`, s.rank === 1 ? '第 1' : `第 ${s.rank}`];

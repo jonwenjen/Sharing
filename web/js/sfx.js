@@ -3,13 +3,36 @@ import { h, icon } from './ui.js';
 
 const SFX_KEY = 'sharing-sfx-v1';
 let sfxOn = (() => { try { return localStorage.getItem(SFX_KEY) !== 'off'; } catch { return true; } })();
-let sfxCtx = null, sfxOut = null, sfxNoiseBuf = null;
+let sfxCtx = null, sfxOut = null, sfxNoiseBuf = null, sfxSilent = null;
+const sfxIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+// iPhone 的網頁音效預設跟著靜音鍵走，開靜音就完全沒聲音：
+// iOS 17+ 把音訊類型設成「播放」；更舊的版本先播一段無聲 <audio>，把音訊切到播放模式
+function sfxPlayback() {
+  try { if (navigator.audioSession) { navigator.audioSession.type = 'playback'; return; } } catch { /* 不支援 */ }
+  if (!sfxIOS || sfxSilent) return;
+  const n = 2205, b = new Uint8Array(44 + n), v = new DataView(b.buffer);
+  const w = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, 22050, true); v.setUint32(28, 22050, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true); w(36, 'data'); v.setUint32(40, n, true);
+  b.fill(128, 44);
+  sfxSilent = new Audio(URL.createObjectURL(new Blob([b], { type: 'audio/wav' })));
+  sfxSilent.setAttribute('playsinline', '');
+  sfxSilent.setAttribute('x-webkit-airplay', 'deny');
+  sfxSilent.play().catch(() => { sfxSilent = null; });
+}
+
+/** 離開遊戲時呼叫：把 iOS 音訊類型還原，別的 App 的音樂不會被一直壓住 */
+export function sfxRelease() {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'auto'; } catch { /* 不支援 */ }
+}
 
 function sfxAc() {
   if (!sfxOn) return null;
   if (!sfxCtx) {
     const C = window.AudioContext || window.webkitAudioContext;
     if (!C) return null;
+    sfxPlayback();
     sfxCtx = new C();
     // 柔性削峰：小聲時幾乎不變，好幾個聲音疊在一起時圓滑壓住不爆音（順便多一點衝勁）
     const clip = sfxCtx.createWaveShaper();
@@ -30,6 +53,8 @@ function sfxAc() {
 
 /** 要在使用者點擊的當下呼叫（iOS 規定），之後計時器裡的音效才出得來 */
 export function sfxUnlock() {
+  if (!sfxOn) return;
+  sfxPlayback();
   const c = sfxAc();
   if (!c) return;
   const s = c.createBufferSource();
@@ -110,7 +135,6 @@ export const sfx = {
 };
 
 // ---- 震動：Android 用 navigator.vibrate；iPhone 不支援，改用 iOS 18 起「切換開關」會輕震的特性
-const sfxIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 let sfxSwitch = null;
 function sfxIosTap() {
   if (!sfxSwitch || !sfxSwitch.isConnected) {
@@ -136,7 +160,7 @@ export function sfxToggle() {
   const b = h('button', { class: 'icon-btn sfx-btn', onclick: () => {
     sfxOn = !sfxOn;
     try { localStorage.setItem(SFX_KEY, sfxOn ? 'on' : 'off'); } catch { /* 無痕模式 */ }
-    if (sfxOn) { sfxUnlock(); sfx.pop(4); } else if (sfxCtx) sfxCtx.suspend().catch(() => {});
+    if (sfxOn) { sfxUnlock(); sfx.pop(4); } else { sfxRelease(); if (sfxCtx) sfxCtx.suspend().catch(() => {}); }
     draw();
   } });
   const draw = () => { b.setAttribute('aria-label', sfxOn ? '關閉音效' : '開啟音效'); b.setAttribute('aria-pressed', String(sfxOn)); b.replaceChildren(icon(sfxOn ? 'sound' : 'mute')); };

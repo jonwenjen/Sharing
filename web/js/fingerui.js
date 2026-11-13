@@ -1,7 +1,7 @@
 // 手指抽籤：每人一根手指放上螢幕 → 3 秒倒數鎖定 → 5 秒內揭曉（命運／配對／優先權，模式同爬梯子）
 import { h, mount, icon, sheet } from './ui.js';
 import { LADDER_MODES, fingerDraw } from './ladder.js';
-import { sfx, buzz, sfxUnlock, sfxToggle } from './sfx.js';
+import { sfx, buzz, sfxUnlock, sfxToggle, sfxRelease } from './sfx.js';
 
 const FG_COLORS = ['#FF4D6D', '#FFB020', '#38D9A9', '#4DABF7', '#B197FC', '#FF8CC6', '#FFD43B', '#63E6BE', '#74C0FC', '#DA77F2', '#A9E34B', '#FF922B'];
 const FG_PETS = [['🐱', '小貓'], ['🐶', '小狗'], ['🐰', '小兔'], ['🐼', '熊貓'], ['🦊', '狐狸'], ['🐸', '青蛙'], ['🐯', '老虎'], ['🐨', '無尾熊'], ['🐷', '小豬'], ['🐵', '猴子'], ['🐧', '企鵝'], ['🐹', '倉鼠']];
@@ -317,6 +317,7 @@ export function fingerStage({ mode, count }) {
     cancelAnimationFrame(raf);
     timers.forEach(clearTimeout); timers = [];
     document.removeEventListener('keydown', onKey);
+    sfxRelease();
     stage.classList.remove('open');
     document.body.classList.remove('lad-open');
     setTimeout(() => stage.remove(), 250);

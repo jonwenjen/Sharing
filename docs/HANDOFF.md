@@ -2,7 +2,7 @@
 
 任何一個新開的 session，只要 clone 了這個 repo，就會看到這份文件——不用依賴任何 Project 或記憶功能。
 
-_最後更新：2026-09-26（v1.12）_
+_最後更新：2026-11-13（v1.13）_
 
 ## 這是什麼專案
 LINE 群組記帳／分帳工具（類似 Splitwise / Lightsplit），前端是 LIFF 網頁（`web/`），後端是 Cloudflare Worker（`worker/`）+ D1。詳細規格看 `DESIGN.md`，開發規則看 `README.md`。
@@ -21,7 +21,7 @@ git checkout -- web/js/config.js
 npm run build:demo   # 用正式 config 重新打包一次
 ```
 
-## 版本歷史（v1.8 → v1.12）
+## 版本歷史（v1.8 → v1.13）
 - **v1.8**：記帳小技巧（金額可輸入算式、依項目名稱自動分類、記住上次付款人/幣別/分攤、複製成新一筆）、合併重複成員、吃什麼轉盤（單層 40 個候選）
 - **v1.9**：吃什麼轉盤改成四大項（餐點／小吃／飲料／甜點），各自分區顯示（例如餐點分「正餐料理／速食連鎖／超商」）；飲料加入南部起家品牌（50嵐、清心福全、迷客夏、茶の魔手、翰林茶館、雙全紅茶、樺達奶茶）；轉完回到轉盤主畫面而非直接關閉
 - **v1.10**：
@@ -35,6 +35,11 @@ npm run build:demo   # 用正式 config 重新打包一次
 
 - **v1.12**：爬梯子、手指抽籤、吃什麼轉盤加上熱血音效與震動（`web/js/sfx.js`）。音效用 Web Audio 即時合成、不用音檔；Android 用 `navigator.vibrate`，iPhone 用 iOS 18 切換開關的觸覺回饋。遊戲畫面右上角可關音效（記在 localStorage）。`tests/e2e_sfx.py` 攔截振盪器與 vibrate 驗證
 
+- **v1.13**：
+  - iPhone 靜音模式下遊戲沒聲音 → 進遊戲時把 `navigator.audioSession.type` 設成 `playback`（iOS 17+），舊版 iOS 先播一段無聲 `<audio>`；離開遊戲還原成 `auto`
+  - LINE 群組裡只打 `+1`～`+5`（沒寫幣別的 1～5 整數）不記帳（`parse.js`）
+  - `worker.yml` 的部署路徑加上 worker 會 import 的 `parse.js`、`messages.js`、`ladder.js`（之前改這些檔案不會重新部署機器人）
+
 相關檔案：`web/js/foodwheel.js`（轉盤）、`web/js/app.js`（記帳編輯器、公費）、`web/js/money.js`（分帳邏輯、自動分類）。
 
 ## 推送
@@ -45,7 +50,7 @@ npm run build:demo   # 用正式 config 重新打包一次
 ## 開發慣例
 - 商業邏輯（分帳、結算、猜分類）在 `web/js/money.js`，純函式、有單元測試（`tests/money.test.mjs`）
 - 每個功能都有對應的 Playwright E2E（`tests/e2e*.py`），檔名對應功能（`e2e_food.py`＝轉盤、`e2e_fundin.py`＝公費複選、`e2e_ladder.py`＝爬梯子、`e2e_finger.py`＝手指抽籤（用 CDP 模擬多點觸控）…）
-- 雲端容器裡 pip 裝的 Playwright 版本跟預裝的 Chromium 對不上時，用 `launch(executable_path='/opt/pw-browsers/chromium-1194/chrome-linux/chrome')` 跑（不要改測試檔提交）
+- 雲端容器裡 pip 裝的 Playwright 版本跟預裝的 Chromium 對不上時，用 `launch(executable_path=<`/opt/pw-browsers/chromium-*/chrome-linux*/chrome` 找到的那個>)` 跑（不要改測試檔提交）
 - 示範版是把所有模組串成一個檔（`scripts/build-demo.mjs`），**各模組的頂層變數名稱不能重複**；新增模組要加進它的 `order`
 - commit message 慣例：`vX.Y: 功能摘要（前端／後端）`，中文
 - `dist/` 是 gitignore 的，`npm run build:demo` 本地產生即可，不用進版控

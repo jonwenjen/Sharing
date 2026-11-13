@@ -29,7 +29,7 @@ export const QUICK_HELP = [
 
 /** @returns {null | {amount:number,currency:string|null,title:string,mentions:string[],includeMe:boolean,error?:string}} */
 export function parseQuickEntry(text) {
-  const t = String(text || '').trim().replace(/\u3000/g, ' ');
+  const t = String(text || '').trim().replace(/\u3000/g, ' ').replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xFEE0));
   if (!/^[+＋]/.test(t)) return null;
   const m = t.match(/^[+＋]\s*(NT\$|US\$|[¥￥$€₩฿£])?\s*([\d,]+(?:\.\d+)?)\s*(.*)$/i);
   if (!m) return { error: '看不懂金額，範例：+1200 晚餐' };
@@ -37,6 +37,8 @@ export function parseQuickEntry(text) {
   if (!(amount > 0)) return { error: '金額需大於 0' };
   let currency = curOf(m[1]);
   let rest = m[3].trim();
+  // 群組裡常見的「+1」「+2」是報名、附和，不是記帳：沒寫幣別的 1～5 整數一律忽略
+  if (!m[1] && /^[1-5]$/.test(m[2]) && !/^([A-Za-z]{3}|円|日圓|日幣|日元|台幣|臺幣|美金|美元|歐元|韓元|韓幣|港幣|人民幣|泰銖|英鎊|元)(?=\s|$|@)/.test(rest)) return null;
   // 金額後緊接的幣別：+3000JPY、+3000 円、+3000 日幣
   const cm = rest.match(/^([A-Za-z]{3}|円|日圓|日幣|日元|台幣|臺幣|美金|美元|歐元|韓元|韓幣|港幣|人民幣|泰銖|英鎊|元)(?=\s|$|@)/);
   if (cm && curOf(cm[1])) { currency = curOf(cm[1]); rest = rest.slice(cm[0].length).trim(); }

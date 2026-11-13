@@ -2,7 +2,7 @@ name: Deploy API to Cloudflare
 on:
   push:
     branches: [main]
-    paths: ['worker/**', 'web/js/money.js', 'web/js/settle.js']
+    paths: ['worker/**', 'web/js/money.js', 'web/js/settle.js', 'web/js/parse.js', 'web/js/messages.js', 'web/js/ladder.js']
   workflow_dispatch:
 jobs:
   deploy:

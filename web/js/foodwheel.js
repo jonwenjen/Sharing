@@ -1,6 +1,6 @@
 // 吃什麼轉盤：選大項（餐點／小吃／飲料／甜點）→ 挑細項 → 大轉盤 → 揭曉後回到主畫面，可以直接記一筆
 import { h, mount, icon, toast, sheet } from './ui.js';
-import { sfx, buzz, sfxUnlock, sfxToggle } from './sfx.js';
+import { sfx, buzz, sfxUnlock, sfxToggle, sfxRelease } from './sfx.js';
 
 // 大項：cat＝「記一筆」時預設的記帳分類；sections＝細項分區 [區名, [[名稱, emoji], ...]]
 export const FOOD_GROUPS = [
@@ -342,6 +342,7 @@ export function foodStage(items, ctx = {}) {
   function finish(res = null) {
     if (closed) return;
     closed = true;
+    sfxRelease();
     stage.classList.remove('open');
     document.body.classList.remove('lad-open');
     document.removeEventListener('keydown', onKey);
